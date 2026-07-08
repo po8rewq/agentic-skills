@@ -13,6 +13,7 @@ CONFIG_FILENAMES = ("agentic.yaml", "agentic.yml")
 
 DEFAULTS: dict[str, Any] = {
     "project": {"name": None, "default_branch": "main"},
+    "editor": None,
     "runtime": {
         "pipeline": "default",
         "skills_dir": str(ROOT / "skills"),
@@ -169,6 +170,9 @@ def load_config(repo: Path, path: Path | None = None) -> dict[str, Any]:
 
 def validate_config(config: dict[str, Any]) -> None:
     errors: list[str] = []
+    editor = config.get("editor")
+    if editor is not None and not isinstance(editor, str):
+        errors.append("editor must be a string when provided")
     providers = config.get("providers", {}).get("available", {})
     default_provider = config.get("providers", {}).get("default")
     if default_provider not in providers:

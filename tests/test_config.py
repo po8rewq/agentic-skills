@@ -32,6 +32,13 @@ class ConfigTests(unittest.TestCase):
             config = load_config(repo)
             self.assertEqual(config["providers"]["default"], "codex")
 
+    def test_load_config_accepts_editor_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yaml").write_text('editor: "code --wait"\n', encoding="utf-8")
+            config = load_config(repo)
+            self.assertEqual(config["editor"], "code --wait")
+
     def test_cli_warns_when_no_project_config_exists(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -92,6 +99,13 @@ class ConfigTests(unittest.TestCase):
             repo = Path(directory)
             (repo / "agentic.yaml").write_text("memory:\n  review: known-issues.md\n")
             with self.assertRaisesRegex(ValueError, "memory.review"):
+                load_config(repo)
+
+    def test_invalid_editor_config_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yaml").write_text("editor:\n  command: code --wait\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "editor must be a string"):
                 load_config(repo)
 
 

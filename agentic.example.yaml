@@ -1,6 +1,7 @@
 project:
   name: my-api
   default_branch: main
+editor: "code --wait"
 runtime:
   pipeline: default
   skills_dir: .ai/skills

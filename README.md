@@ -148,6 +148,12 @@ Gate behavior:
 `--skip-approval` bypasses approval prompts for non-interactive runs, but it does
 not bypass `blocked` gates.
 
+At approval prompts, `r` reruns the current stage and `e` opens the current
+artifact in an editor before returning to the same prompt. Configure the editor
+with a top-level `editor` key in `agentic.yaml` or `agentic.yml`, for example
+`editor: "code --wait"`. If `editor` is unset, the runner falls back to `$EDITOR`
+and then `vi`.
+
 ### Risk routing
 
 Architecture output includes:
