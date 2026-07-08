@@ -258,7 +258,7 @@ class PipelineRunner:
 
     @staticmethod
     def _extract_agentic_yaml(output: str) -> dict[str, Any]:
-        match = re.search(r"\A\s*```ya?ml\s+agentic\s*\n(.*?)\n```\s*", output, re.S | re.I)
+        match = re.search(r"```ya?ml\s+agentic\s*\n(.*?)\n```", output, re.S | re.I)
         if not match:
             raise RuntimeError("Provider output is missing required ```yaml agentic``` metadata block")
         try:

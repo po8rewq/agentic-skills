@@ -300,6 +300,15 @@ class PipelineTests(unittest.TestCase):
             (skill / "output-schema.yaml").write_text("required_metadata: [rollback_plan]\n")
             PipelineRunner._validate_output(skill, "```yaml agentic\nrollback_plan: null\n```\n")
 
+    def test_output_schema_accepts_metadata_block_after_preamble(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "output-schema.yaml").write_text("required_metadata: [status, confidence]\n")
+            PipelineRunner._validate_output(
+                skill,
+                "Here is the requirements artifact.\n\n```yaml agentic\nstatus: ready\nconfidence: 0.9\n```\n",
+            )
+
     def test_output_schema_rejects_invalid_metadata_enum(self):
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory)
