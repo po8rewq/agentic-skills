@@ -252,7 +252,16 @@ Record:
 - command results
 - PR creation status
 
-Do not block on accurate cost accounting in the first pass. Include `cost_usd: null` until providers expose usage reliably.
+Cost accounting is intentionally omitted.
+
+### Milestone 4 status
+
+Implemented:
+
+- `evaluation.yaml` is written for completed, stopped, and failed non-dry runs.
+- Evaluation records run identity, task, repo, branch, pipeline, status, completed stages, stage metadata, routing, checks, and PR outcome.
+- Command groups record structured check status in `state.json`.
+- Cost fields are intentionally not emitted.
 
 ## Milestone 5: Specialized Review
 

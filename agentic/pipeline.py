@@ -52,6 +52,10 @@ class PipelineRunner:
     def _save_state(self) -> None:
         self.state_path.write_text(json.dumps(self.state, indent=2) + "\n", encoding="utf-8")
 
+    @property
+    def run_id(self) -> str:
+        return self.run_dir.name
+
     def prepare(self) -> None:
         if self.options.resume:
             if not self.run_dir.exists():
@@ -265,7 +269,7 @@ class PipelineRunner:
         return self._extract_agentic_yaml(self._artifact(artifact_name))
 
     def _record_stage_metadata(self, stage: str, metadata: dict[str, Any]) -> None:
-        stage_state: dict[str, Any] = {}
+        stage_state: dict[str, Any] = self.state.setdefault("stages", {}).get(stage, {})
         if "status" in metadata:
             stage_state["status"] = metadata["status"]
         if "confidence" in metadata:
@@ -324,10 +328,12 @@ class PipelineRunner:
     def _run_commands(self, step: dict[str, Any]) -> None:
         lines = [f"# {step['id']} Results", ""]
         failed = False
+        checks = self.state.setdefault("checks", {})
         for name in step.get("commands", []):
             command = self.config["commands"].get(name)
             if not command:
                 lines += [f"## {name}", "", "Skipped: command is not configured.", ""]
+                checks[name] = {"command": None, "exit_code": None, "status": "skipped", "stage": step["id"]}
                 continue
             print(f"[{step['id']}] $ {command}")
             if self.options.dry_run:
@@ -335,6 +341,12 @@ class PipelineRunner:
             result = subprocess.run(command, cwd=self.repo, shell=True, text=True, capture_output=True)
             combined = (result.stdout + result.stderr).strip()
             lines += [f"## {name}", "", f"Exit code: {result.returncode}", "", "```text", combined, "```", ""]
+            checks[name] = {
+                "command": command,
+                "exit_code": result.returncode,
+                "status": "passed" if result.returncode == 0 else "failed",
+                "stage": step["id"],
+            }
             failed |= result.returncode != 0
             if self.options.verbose and combined:
                 print(combined)
@@ -374,7 +386,46 @@ class PipelineRunner:
         )
         url = forge.create_pr(self.options.task.splitlines()[0][:120], body, self.config["project"]["default_branch"])
         (self.run_dir / "pr-url.txt").write_text(url + "\n", encoding="utf-8")
+        self.state["pr"] = {"created": True, "url": url}
         print(f"Pull request: {url}")
+
+    def _evaluation(self) -> dict[str, Any]:
+        stages = {}
+        for stage, values in self.state.get("stages", {}).items():
+            stages[stage] = dict(values)
+        for stage, values in self.state.get("routing", {}).get("stages", {}).items():
+            stages.setdefault(stage, {})["model"] = values.get("model")
+        routing = self.state.get("routing", {})
+        if "review" in stages:
+            stages["review"]["review_passes"] = routing.get("review_passes", [])
+        return {
+            "run_id": self.run_id,
+            "task": self.options.task,
+            "repo": self.config["project"]["name"],
+            "branch": self.state.get("branch"),
+            "pipeline": self.options.pipeline_name,
+            "status": self.state.get("status"),
+            "completed_stages": self.state.get("completed", []),
+            "stages": stages,
+            "risk": self.state.get("risk", {"level": self._current_risk_level()}),
+            "routing": {
+                "risk_level": routing.get("risk_level", self._current_risk_level()),
+                "implementation_model": routing.get("implementation_model"),
+                "review_passes": routing.get("review_passes", self._selected_review_passes()),
+                "require_manual_merge": routing.get("require_manual_merge", False),
+            },
+            "checks": self.state.get("checks", {}),
+            "outcome": {
+                "pr_created": bool(self.state.get("pr", {}).get("created")),
+                "pr_url": self.state.get("pr", {}).get("url"),
+                "require_manual_merge": routing.get("require_manual_merge", False),
+            },
+        }
+
+    def _write_evaluation(self) -> None:
+        (self.run_dir / "evaluation.yaml").write_text(
+            yaml.safe_dump(self._evaluation(), sort_keys=False), encoding="utf-8"
+        )
 
     def run(self) -> Path:
         self.prepare()
@@ -382,23 +433,32 @@ class PipelineRunner:
         selected = [s for s in self.pipeline["steps"] if not self.options.stage or s["id"] == self.options.stage]
         if self.options.stage and not selected:
             raise ValueError(f"Stage not found in pipeline: {self.options.stage}")
-        for step in selected:
-            stage = step["id"]
-            if stage in completed or not self._condition(step.get("condition")):
-                continue
-            if step.get("type", "skill") == "skill":
-                self._run_skill(step)
-            elif step["type"] == "command_group":
-                self._run_commands(step)
-            elif step["type"] == "forge_pr":
+        try:
+            for step in selected:
+                stage = step["id"]
+                if stage in completed or not self._condition(step.get("condition")):
+                    continue
+                if step.get("type", "skill") == "skill":
+                    self._run_skill(step)
+                elif step["type"] == "command_group":
+                    self._run_commands(step)
+                elif step["type"] == "forge_pr":
+                    if not self.options.dry_run:
+                        self._create_pr()
+                else:
+                    raise ValueError(f"Unknown step type: {step['type']}")
                 if not self.options.dry_run:
-                    self._create_pr()
-            else:
-                raise ValueError(f"Unknown step type: {step['type']}")
+                    self.state.setdefault("completed", []).append(stage)
+                    self._save_state()
+        except Exception:
             if not self.options.dry_run:
-                self.state.setdefault("completed", []).append(stage)
+                if self.state.get("status") == "running":
+                    self.state["status"] = "failed"
                 self._save_state()
+                self._write_evaluation()
+            raise
         if not self.options.dry_run:
             self.state["status"] = "completed"
             self._save_state()
+            self._write_evaluation()
         return self.run_dir

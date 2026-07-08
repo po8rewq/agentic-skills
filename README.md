@@ -116,6 +116,8 @@ Every run stores the task, merged config snapshot, prompts, provider outputs, co
 results, state, and PR context below `.ai/runs/<timestamp>-<task>/`. Resume skips
 completed stages. Architecture risk metadata drives later routing decisions, with
 task-keyword risk detection as a fallback before architecture exists.
+Each non-dry run also writes `evaluation.yaml`, a cost-free structured summary of
+the run status, completed stages, gate metadata, routing, checks, and PR outcome.
 
 ### Requirements and architecture gates
 
@@ -228,6 +230,44 @@ context:
 Missing context files are skipped. This keeps new projects usable before the
 templates are filled in, while letting mature repos give architecture and review
 agents a richer map than implementation needs.
+
+### Evaluation records
+
+The runner writes `.ai/runs/<run-id>/evaluation.yaml` for completed, stopped, and
+failed non-dry runs. It intentionally omits cost fields.
+
+Example shape:
+
+```yaml
+run_id: 2026-07-08-120000-add-audit-logging
+task: Add audit logging
+repo: my-api
+branch: ai/add-audit-logging
+pipeline: default
+status: completed
+completed_stages: [requirements, architecture, implementation, checks, review]
+stages:
+  requirements:
+    status: ready
+    confidence: 0.9
+    model: claude-haiku-4-5
+risk:
+  level: low
+routing:
+  risk_level: low
+  implementation_model: gpt-5.1-codex
+  review_passes: [correctness, tests]
+  require_manual_merge: false
+checks:
+  test:
+    command: pnpm test
+    exit_code: 0
+    status: passed
+outcome:
+  pr_created: false
+  pr_url: null
+  require_manual_merge: false
+```
 
 The runner creates an `ai/<task>` branch when invoked in a Git repository. A dirty
 worktree is rejected by default. GitHub uses `gh`; Gitea uses `tea`. Merge remains a

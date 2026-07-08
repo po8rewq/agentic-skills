@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from agentic.config import load_config
 from agentic.pipeline import PipelineRunner, RunOptions, slugify
 
@@ -103,8 +105,10 @@ class PipelineTests(unittest.TestCase):
             runner.config["commands"]["test"] = "printf passed"
             run_dir = runner.run()
             result = (run_dir / "test-results.md").read_text()
+            state = json.loads((run_dir / "state.json").read_text())
             self.assertIn("Exit code: 0", result)
             self.assertIn("passed", result)
+            self.assertEqual(state["checks"]["test"]["status"], "passed")
 
     def test_resume_skips_completed_steps(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -273,6 +277,41 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(runner.state["routing"]["implementation_model"], "opus")
             self.assertIn("migration_or_rollback", runner.state["routing"]["review_passes"])
             self.assertTrue(runner.state["routing"]["require_manual_merge"])
+
+    def test_evaluation_yaml_records_run_without_costs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.runner(root, {"steps": [{"id": "checks", "type": "command_group", "commands": ["test"]}]})
+            runner.config["commands"]["test"] = "printf passed"
+            runner.state["stages"] = {"requirements": {"status": "ready", "confidence": 0.9}}
+            runner.state["routing"] = {
+                "stages": {"requirements": {"model": "haiku"}},
+                "risk_level": "low",
+                "review_passes": ["correctness", "tests"],
+                "require_manual_merge": False,
+            }
+            run_dir = runner.run()
+            evaluation = yaml.safe_load((run_dir / "evaluation.yaml").read_text())
+
+            self.assertEqual(evaluation["run_id"], run_dir.name)
+            self.assertEqual(evaluation["repo"], root.name)
+            self.assertEqual(evaluation["checks"]["test"]["status"], "passed")
+            self.assertEqual(evaluation["stages"]["requirements"]["model"], "haiku")
+            self.assertFalse(evaluation["outcome"]["pr_created"])
+            self.assertNotIn("cost_usd", str(evaluation))
+
+    def test_failed_command_writes_evaluation_yaml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.runner(root, {"steps": [{"id": "checks", "type": "command_group", "commands": ["test"]}]})
+            runner.config["commands"]["test"] = "python3 -c 'import sys; sys.exit(2)'"
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                runner.run()
+
+            evaluation = yaml.safe_load((runner.run_dir / "evaluation.yaml").read_text())
+            self.assertEqual(evaluation["status"], "failed")
+            self.assertEqual(evaluation["checks"]["test"]["exit_code"], 2)
+            self.assertEqual(evaluation["checks"]["test"]["status"], "failed")
 
 
 if __name__ == "__main__":
