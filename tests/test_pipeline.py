@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -135,6 +136,30 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((run_dir / "task.md").exists())
             self.assertTrue((run_dir / "config.snapshot.yaml").exists())
             self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "completed")
+
+    def test_prepare_rejects_dirty_repo_before_creating_run_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            (root / "README.md").write_text("hello\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True, text=True)
+            (root / "dirty.txt").write_text("pending\n", encoding="utf-8")
+
+            runner = self.runner(root)
+
+            with self.assertRaisesRegex(RuntimeError, "Worktree is not clean"):
+                runner.prepare()
+
+            self.assertFalse(runner.run_dir.exists())
 
     def test_review_condition_uses_verdict_or_actual_findings(self):
         with tempfile.TemporaryDirectory() as directory:

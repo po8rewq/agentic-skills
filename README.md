@@ -118,6 +118,8 @@ completed stages. Architecture risk metadata drives later routing decisions, wit
 task-keyword risk detection as a fallback before architecture exists.
 Each non-dry run also writes `evaluation.yaml`, a cost-free structured summary of
 the run status, completed stages, gate metadata, routing, checks, and PR outcome.
+When `vcs.require_clean_worktree` is enabled, the runner checks repository cleanliness
+before creating a run directory, so rejected starts do not leave partial artifacts.
 
 ### Requirements and architecture gates
 

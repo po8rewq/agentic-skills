@@ -56,6 +56,15 @@ class PipelineRunner:
     def run_id(self) -> str:
         return self.run_dir.name
 
+    def _prepare_git_run(self) -> None:
+        if not self.git.is_repo():
+            return
+        if self.config["vcs"].get("require_clean_worktree", True):
+            self.git.ensure_clean()
+        branch = self.config["vcs"].get("branch_prefix", "ai/") + slugify(self.options.task)
+        self.git.create_branch(branch)
+        self.state["branch"] = branch
+
     def prepare(self) -> None:
         if self.options.resume:
             if not self.run_dir.exists():
@@ -74,18 +83,13 @@ class PipelineRunner:
                 self.state["branch"] = branch
                 print(f"[dry-run] would create branch {branch}")
             return
+        if self.git.is_repo():
+            self._prepare_git_run()
         self.logs_dir.mkdir(parents=True, exist_ok=False)
         (self.run_dir / "task.md").write_text(f"# Task\n\n{self.options.task}\n", encoding="utf-8")
         (self.run_dir / "config.snapshot.yaml").write_text(
             yaml.safe_dump(self.config, sort_keys=False), encoding="utf-8"
         )
-        if self.git.is_repo():
-            if self.config["vcs"].get("require_clean_worktree", True):
-                self.git.ensure_clean()
-            branch = self.config["vcs"].get("branch_prefix", "ai/") + slugify(self.options.task)
-            if not self.options.dry_run:
-                self.git.create_branch(branch)
-            self.state["branch"] = branch
         self._save_state()
 
     def _artifact(self, name: str) -> str:
