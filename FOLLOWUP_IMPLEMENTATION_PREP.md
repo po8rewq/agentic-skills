@@ -263,7 +263,36 @@ Implemented:
 - Command groups record structured check status in `state.json`.
 - Cost fields are intentionally not emitted.
 
-## Milestone 5: Specialized Review
+## Milestone 5: Agent Memory
+
+Goal: capture durable repo lessons without relying on hidden model memory.
+
+### Files to change
+
+- `agentic/config.py`
+- `agentic/pipeline.py`
+- `agentic.example.yaml`
+- `README.md`
+- `tests/test_config.py`
+- `tests/test_pipeline.py`
+
+### Runner behavior
+
+- Load configured `.ai/memory/*.md` files into prompts under `Repository memory`.
+- Keep memory read-only.
+- Skip missing memory files.
+- Configure memory per stage so implementation receives less memory than architecture/review.
+
+### Milestone 5 status
+
+Implemented:
+
+- Stage-specific `memory` config.
+- Prompt loading for configured repo memory files.
+- Missing memory files are skipped.
+- Memory is read-only; automatic memory writing is intentionally deferred.
+
+## Milestone 6: Specialized Review
 
 Goal: replace one generic review stage with selected review passes.
 
@@ -290,7 +319,7 @@ Goal: replace one generic review stage with selected review passes.
 - Aggregate findings into `review.md`.
 - Block fix-review on any `severity: blocking`.
 
-## Milestone 6: PR Generation Upgrade
+## Milestone 7: PR Generation Upgrade
 
 Goal: PRs include requirements, architecture, risk, checks, and review artifacts.
 

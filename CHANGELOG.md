@@ -10,6 +10,7 @@
 - Added optional context and memory template installation.
 - Added stage-specific repo context loading for pipeline prompts.
 - Added cost-free `evaluation.yaml` run summaries.
+- Added stage-specific read-only repo memory loading for pipeline prompts.
 
 ## 0.1.0 - 2026-07-07
 

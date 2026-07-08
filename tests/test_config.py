@@ -12,11 +12,14 @@ class ConfigTests(unittest.TestCase):
     def test_load_config_resolves_project_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            (repo / "agentic.yaml").write_text("runtime:\n  artifacts_dir: output\ncontext:\n  dir: context\n")
+            (repo / "agentic.yaml").write_text(
+                "runtime:\n  artifacts_dir: output\ncontext:\n  dir: context\nmemory:\n  dir: memory\n"
+            )
             config = load_config(repo)
             self.assertEqual(config["project"]["name"], repo.name)
             self.assertEqual(config["runtime"]["artifacts_dir"], str(repo / "output"))
             self.assertEqual(config["context"]["dir"], str(repo / "context"))
+            self.assertEqual(config["memory"]["dir"], str(repo / "memory"))
 
     def test_high_risk_routing_escalates_only_sensitive_stages(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -56,6 +59,13 @@ class ConfigTests(unittest.TestCase):
             repo = Path(directory)
             (repo / "agentic.yaml").write_text("context:\n  architecture: repo-map.md\n")
             with self.assertRaisesRegex(ValueError, "context.architecture"):
+                load_config(repo)
+
+    def test_invalid_memory_stage_config_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yaml").write_text("memory:\n  review: known-issues.md\n")
+            with self.assertRaisesRegex(ValueError, "memory.review"):
                 load_config(repo)
 
 

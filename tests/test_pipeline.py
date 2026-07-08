@@ -268,6 +268,31 @@ class PipelineTests(unittest.TestCase):
             prompt = runner._prompt({"id": "architecture", "inputs": []}, "Architecture skill")
             self.assertIn("No configured repo context file was found", prompt)
 
+    def test_prompt_includes_stage_specific_repo_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            memory_dir = root / ".ai" / "memory"
+            memory_dir.mkdir(parents=True)
+            (memory_dir / "decisions.md").write_text("# Decisions\n\nArchitecture and review memory.\n")
+            (memory_dir / "lessons-learned.md").write_text("# Lessons\n\nImplementation-only memory.\n")
+            runner = self.runner(root, task="rename button")
+            runner.config["memory"]["architecture"] = ["decisions.md"]
+            runner.config["memory"]["implementation"] = ["lessons-learned.md"]
+
+            architecture_prompt = runner._prompt({"id": "architecture", "inputs": []}, "Architecture skill")
+            implementation_prompt = runner._prompt({"id": "implementation", "inputs": []}, "Implementation skill")
+
+            self.assertIn("# Repository memory", architecture_prompt)
+            self.assertIn("Architecture and review memory", architecture_prompt)
+            self.assertIn("Implementation-only memory", implementation_prompt)
+            self.assertNotIn("Implementation-only memory", architecture_prompt)
+
+    def test_prompt_handles_missing_repo_memory_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            prompt = runner._prompt({"id": "review", "inputs": []}, "Review skill")
+            self.assertIn("No configured repo memory file was found", prompt)
+
     def test_stage_routing_records_review_passes_and_manual_merge(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = self.runner(Path(directory), task="rename button")

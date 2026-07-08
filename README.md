@@ -231,6 +231,41 @@ Missing context files are skipped. This keeps new projects usable before the
 templates are filled in, while letting mature repos give architecture and review
 agents a richer map than implementation needs.
 
+### Repo memory
+
+Agents can also receive read-only durable memory from `.ai/memory`. Install starter
+templates with:
+
+```bash
+install-agentic-skills --with-memory .ai/skills
+```
+
+Then fill in durable lessons, decisions, known issues, recurring review comments,
+and preferred patterns. Configure memory per stage:
+
+```yaml
+memory:
+  dir: .ai/memory
+  requirements:
+    - decisions.md
+    - known-issues.md
+  architecture:
+    - decisions.md
+    - preferred-patterns.md
+    - known-issues.md
+  implementation:
+    - preferred-patterns.md
+    - lessons-learned.md
+    - known-issues.md
+  review:
+    - recurring-review-comments.md
+    - known-issues.md
+    - decisions.md
+```
+
+Memory files are read-only inputs to prompts. The runner does not automatically
+write or update memory; missing files are skipped.
+
 ### Evaluation records
 
 The runner writes `.ai/runs/<run-id>/evaluation.yaml` for completed, stopped, and

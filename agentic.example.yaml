@@ -47,6 +47,23 @@ context:
     - coding-conventions.md
     - dangerous-areas.md
     - dependency-map.md
+memory:
+  dir: .ai/memory
+  requirements:
+    - decisions.md
+    - known-issues.md
+  architecture:
+    - decisions.md
+    - preferred-patterns.md
+    - known-issues.md
+  implementation:
+    - preferred-patterns.md
+    - lessons-learned.md
+    - known-issues.md
+  review:
+    - recurring-review-comments.md
+    - known-issues.md
+    - decisions.md
 vcs:
   type: git
   require_clean_worktree: true

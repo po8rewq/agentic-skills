@@ -64,6 +64,28 @@ DEFAULTS: dict[str, Any] = {
             "dependency-map.md",
         ],
     },
+    "memory": {
+        "dir": ".ai/memory",
+        "requirements": [
+            "decisions.md",
+            "known-issues.md",
+        ],
+        "architecture": [
+            "decisions.md",
+            "preferred-patterns.md",
+            "known-issues.md",
+        ],
+        "implementation": [
+            "preferred-patterns.md",
+            "lessons-learned.md",
+            "known-issues.md",
+        ],
+        "review": [
+            "recurring-review-comments.md",
+            "known-issues.md",
+            "decisions.md",
+        ],
+    },
     "vcs": {"type": "git", "require_clean_worktree": True, "branch_prefix": "ai/"},
     "forge": {"provider": "none", "create_pr": False, "labels": [], "reviewers": []},
     "gates": {
@@ -128,6 +150,8 @@ def load_config(repo: Path, path: Path | None = None) -> dict[str, Any]:
         config["runtime"][key] = str(p if p.is_absolute() else repo / p)
     context_dir = Path(config["context"]["dir"]).expanduser()
     config["context"]["dir"] = str(context_dir if context_dir.is_absolute() else repo / context_dir)
+    memory_dir = Path(config["memory"]["dir"]).expanduser()
+    config["memory"]["dir"] = str(memory_dir if memory_dir.is_absolute() else repo / memory_dir)
     validate_config(config)
     return config
 
@@ -164,6 +188,8 @@ def validate_config(config: dict[str, Any]) -> None:
     for stage in ("requirements", "architecture", "implementation", "review"):
         if not isinstance(config.get("context", {}).get(stage, []), list):
             errors.append(f"context.{stage} must be a list of file names")
+        if not isinstance(config.get("memory", {}).get(stage, []), list):
+            errors.append(f"memory.{stage} must be a list of file names")
     if errors:
         raise ValueError("Configuration errors:\n- " + "\n- ".join(errors))
 
