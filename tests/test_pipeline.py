@@ -188,6 +188,54 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(approvals, ["architecture"])
             self.assertEqual(runner.state["risk"]["level"], "high")
 
+    def test_invalid_architecture_risk_level_fails_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory))
+            runner.prepare()
+            artifact = runner.run_dir / "design.md"
+            artifact.write_text(ARCHITECTURE_READY.replace("level: low", "level: extreme"))
+            with self.assertRaisesRegex(RuntimeError, "invalid risk level"):
+                runner._enforce_stage_gate("architecture", artifact, {"id": "architecture", "output": "design.md"})
+
+    def test_current_risk_level_prefers_architecture_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            runner.state["risk"] = {"level": "critical"}
+            self.assertEqual(runner._current_risk_level(), "critical")
+            self.assertEqual(runner._resolve_stage_model("implementation"), "opus")
+
+    def test_current_risk_level_reads_architecture_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            runner.prepare()
+            (runner.run_dir / "design.md").write_text(ARCHITECTURE_READY.replace("level: low", "level: high"))
+            self.assertEqual(runner._current_risk_level(), "high")
+            self.assertEqual(runner._resolve_stage_model("implementation"), "opus")
+
+    def test_current_risk_level_uses_keyword_fallback_before_architecture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="change payment flow")
+            self.assertEqual(runner._current_risk_level(), "high")
+
+    def test_review_prompt_includes_selected_review_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            runner.prepare()
+            (runner.run_dir / "design.md").write_text(ARCHITECTURE_READY.replace("level: low", "level: high"))
+            prompt = runner._prompt({"id": "review", "inputs": []}, "Review skill")
+            self.assertIn("# Required review passes", prompt)
+            self.assertIn("- security", prompt)
+
+    def test_stage_routing_records_review_passes_and_manual_merge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            runner.prepare()
+            runner.state["risk"] = {"level": "critical"}
+            runner._record_stage_routing("implementation", "opus")
+            self.assertEqual(runner.state["routing"]["implementation_model"], "opus")
+            self.assertIn("migration_or_rollback", runner.state["routing"]["review_passes"])
+            self.assertTrue(runner.state["routing"]["require_manual_merge"])
+
 
 if __name__ == "__main__":
     unittest.main()

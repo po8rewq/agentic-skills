@@ -8,6 +8,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RISK_LEVELS = ("low", "medium", "high", "critical")
 
 DEFAULTS: dict[str, Any] = {
     "project": {"name": None, "default_branch": "main"},
@@ -44,11 +45,28 @@ DEFAULTS: dict[str, Any] = {
         "block_on_review_findings": ["blocking", "security"],
     },
     "risk_routing": {
-        "high_risk_keywords": [
-            "auth", "authorization", "billing", "payment", "migration",
-            "encryption", "concurrency", "data loss",
-        ],
-        "escalate_to": "best",
+        "default_level": "low",
+        "implementation_models": {
+            "low": "coding",
+            "medium": "coding",
+            "high": "best",
+            "critical": "best",
+        },
+        "review_passes": {
+            "low": ["correctness", "tests"],
+            "medium": ["correctness", "architecture", "tests"],
+            "high": ["correctness", "architecture", "security", "tests"],
+            "critical": ["correctness", "architecture", "security", "tests", "migration_or_rollback"],
+        },
+        "require_human_approval": ["high", "critical"],
+        "require_manual_merge": ["critical"],
+        "keyword_fallback": {
+            "level": "high",
+            "high_risk_keywords": [
+                "auth", "authorization", "billing", "payment", "migration",
+                "encryption", "concurrency", "data loss",
+            ],
+        },
     },
 }
 
@@ -99,6 +117,21 @@ def validate_config(config: dict[str, Any]) -> None:
         aliases = config.get("models", {}).get("aliases", {})
         if alias not in aliases and not isinstance(alias, str):
             errors.append(f"models.by_stage.{stage} must be a model name or alias")
+    risk_routing = config.get("risk_routing", {})
+    if risk_routing.get("default_level") not in RISK_LEVELS:
+        errors.append(f"risk_routing.default_level must be one of {', '.join(RISK_LEVELS)}")
+    for key in ("implementation_models", "review_passes"):
+        configured = risk_routing.get(key, {})
+        missing = [level for level in RISK_LEVELS if level not in configured]
+        if missing:
+            errors.append(f"risk_routing.{key} is missing levels: {', '.join(missing)}")
+    for key in ("require_human_approval", "require_manual_merge"):
+        invalid = [level for level in risk_routing.get(key, []) if level not in RISK_LEVELS]
+        if invalid:
+            errors.append(f"risk_routing.{key} contains invalid levels: {', '.join(invalid)}")
+    fallback = risk_routing.get("keyword_fallback", {})
+    if fallback.get("level") not in RISK_LEVELS:
+        errors.append(f"risk_routing.keyword_fallback.level must be one of {', '.join(RISK_LEVELS)}")
     if errors:
         raise ValueError("Configuration errors:\n- " + "\n- ".join(errors))
 
@@ -114,11 +147,38 @@ def load_pipeline(config: dict[str, Any], name: str | None = None) -> dict[str, 
     return pipeline
 
 
-def resolve_model(stage: str, task: str, config: dict[str, Any], overrides: dict[str, str]) -> str:
-    configured = overrides.get(stage, config["models"]["by_stage"].get(stage, "coding"))
-    keywords = config["risk_routing"].get("high_risk_keywords", [])
-    high_risk = any(word.casefold() in task.casefold() for word in keywords)
-    if high_risk and stage in {"architecture", "implementation", "review"}:
-        configured = config["risk_routing"]["escalate_to"]
+def resolve_alias(config: dict[str, Any], configured: str) -> str:
     return config["models"].get("aliases", {}).get(configured, configured)
 
+
+def keyword_risk_level(task: str, config: dict[str, Any]) -> str | None:
+    routing = config.get("risk_routing", {})
+    fallback = routing.get("keyword_fallback", {})
+    keywords = fallback.get("high_risk_keywords", routing.get("high_risk_keywords", []))
+    if any(word.casefold() in task.casefold() for word in keywords):
+        return fallback.get("level", "high")
+    return None
+
+
+def review_passes_for_risk(config: dict[str, Any], risk_level: str) -> list[str]:
+    return list(config["risk_routing"]["review_passes"][risk_level])
+
+
+def resolve_model(
+    stage: str,
+    task: str,
+    config: dict[str, Any],
+    overrides: dict[str, str],
+    risk_level: str | None = None,
+) -> str:
+    if stage in overrides:
+        return resolve_alias(config, overrides[stage])
+    configured = config["models"]["by_stage"].get(stage, "coding")
+    if risk_level and risk_level not in RISK_LEVELS:
+        raise ValueError(f"Invalid risk level: {risk_level}")
+    effective_risk = risk_level or keyword_risk_level(task, config)
+    if stage == "implementation" and effective_risk:
+        configured = config["risk_routing"]["implementation_models"][effective_risk]
+    elif effective_risk in {"high", "critical"} and stage in {"architecture", "review"}:
+        configured = config["risk_routing"]["implementation_models"][effective_risk]
+    return resolve_alias(config, configured)

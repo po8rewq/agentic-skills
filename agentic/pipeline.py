@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from .config import resolve_model
+from .config import RISK_LEVELS, keyword_risk_level, resolve_model, review_passes_for_risk
 from .forges import make_forge
 from .providers import make_provider
 from .vcs import Git
@@ -102,6 +102,12 @@ class PipelineRunner:
             "# Skill instructions", skill_text,
             "# Repository instructions", self._repo_context(),
         ]
+        if step["id"] == "review":
+            review_passes = self._selected_review_passes()
+            sections += [
+                "# Required review passes",
+                "\n".join(f"- {name}" for name in review_passes),
+            ]
         for item in step.get("inputs", []):
             if item == "repo_context":
                 continue
@@ -134,7 +140,8 @@ class PipelineRunner:
         output_path = self.run_dir / step["output"]
         prompt_path = self.logs_dir / f"{stage}.prompt.md"
         output_log = self.logs_dir / f"{stage}.output.md"
-        model = resolve_model(stage, self.options.task, self.config, self.options.model_overrides or {})
+        model = self._resolve_stage_model(stage)
+        self._record_stage_routing(stage, model)
         provider_name = step.get("provider", self.config["providers"]["default"])
         print(f"[{stage}] {provider_name} / {model} -> {output_path}")
         if self.options.dry_run:
@@ -150,6 +157,20 @@ class PipelineRunner:
             step.get("approval") or stage in self.config["gates"].get("require_approval_after", [])
         ):
             self._approve(stage, output_path, step)
+
+    def _resolve_stage_model(self, stage: str) -> str:
+        risk_level = self._current_risk_level() if stage in {"architecture", "implementation", "review"} else None
+        return resolve_model(stage, self.options.task, self.config, self.options.model_overrides or {}, risk_level)
+
+    def _record_stage_routing(self, stage: str, model: str) -> None:
+        routing = self.state.setdefault("routing", {})
+        routing.setdefault("stages", {})[stage] = {"model": model}
+        risk_level = self._current_risk_level()
+        routing["risk_level"] = risk_level
+        routing["review_passes"] = self._selected_review_passes(risk_level)
+        routing["require_manual_merge"] = risk_level in self.config["risk_routing"].get("require_manual_merge", [])
+        if stage == "implementation":
+            routing["implementation_model"] = model
 
     def _approve(self, stage: str, output_path: Path, step: dict[str, Any]) -> None:
         if self.options.skip_approval:
@@ -242,11 +263,38 @@ class PipelineRunner:
             self._save_state()
             raise RuntimeError(f"{stage} gate blocked implementation; see {output_path}")
         risk_level = str(self._metadata_get(metadata, "risk.level") or "").casefold()
-        approval_required = status == "risky" or risk_level in {"high", "critical"}
+        if risk_level and risk_level not in RISK_LEVELS:
+            raise RuntimeError(f"{stage} gate metadata has invalid risk level: {risk_level!r}")
+        approval_levels = self.config["risk_routing"].get("require_human_approval", [])
+        approval_required = status == "risky" or risk_level in approval_levels
         if approval_required:
             self._approve(stage, output_path, step)
             return True
         return False
+
+    def _current_risk_level(self) -> str:
+        state_level = self._metadata_get(self.state, "risk.level")
+        if state_level:
+            level = str(state_level).casefold()
+            if level in RISK_LEVELS:
+                return level
+        design_path = self.run_dir / "design.md"
+        if design_path.exists():
+            try:
+                metadata = self._extract_agentic_yaml(design_path.read_text(encoding="utf-8"))
+            except RuntimeError:
+                metadata = {}
+            artifact_level = self._metadata_get(metadata, "risk.level")
+            if artifact_level:
+                level = str(artifact_level).casefold()
+                if level in RISK_LEVELS:
+                    self.state["risk"] = metadata.get("risk", {"level": level})
+                    return level
+        fallback = keyword_risk_level(self.options.task, self.config)
+        return fallback or self.config["risk_routing"]["default_level"]
+
+    def _selected_review_passes(self, risk_level: str | None = None) -> list[str]:
+        return review_passes_for_risk(self.config, risk_level or self._current_risk_level())
 
     def _run_commands(self, step: dict[str, Any]) -> None:
         lines = [f"# {step['id']} Results", ""]

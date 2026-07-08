@@ -7,10 +7,10 @@ Source plan: `/Users/adrien/Downloads/agentic_coding_followup_plan.md`
 The repository already has the core orchestrator shape:
 
 - `agentic/pipeline.py` creates auditable run directories, prompts providers, validates simple Markdown section schemas, runs configured checks, gates manual approval, and can create PRs through a forge adapter.
-- `agentic/config.py` merges defaults with `agentic.yaml`, resolves paths, validates basic config, loads pipeline YAML, and currently escalates models with keyword-based risk routing.
+- `agentic/config.py` merges defaults with `agentic.yaml`, resolves paths, validates basic config, loads pipeline YAML, and supports config-driven risk routing with keyword fallback.
 - `pipelines/default.yaml` and `pipelines/production.yaml` define requirements, architecture, implementation, checks, review, fix-review, final checks, and PR creation.
-- `skills/*/SKILL.md` define the provider-facing instructions, but requirements, architecture, and review currently return Markdown sections rather than machine-readable gate data.
-- Tests cover config loading, keyword model escalation, run directory creation, command persistence, resume behavior, and the current Markdown review-blocking heuristic.
+- `skills/*/SKILL.md` define the provider-facing instructions. Requirements and architecture now require machine-readable `yaml agentic` gate metadata before their Markdown sections.
+- Tests cover config loading, risk routing, gate enforcement, run directory creation, command persistence, resume behavior, and the current Markdown review-blocking heuristic.
 
 The follow-up plan should be implemented as a set of strict pipeline controls, not as a large autonomous-agent rewrite.
 
@@ -150,6 +150,22 @@ risk_routing:
 - Store risk in `state.json`.
 - Use risk to resolve the implementation model.
 - Keep keyword routing as a fallback only when architecture metadata is unavailable.
+
+### Milestone 2A status
+
+Implemented:
+
+- Config-driven `risk_routing` defaults and validation.
+- Architecture risk/state/artifact lookup as the source of truth after architecture.
+- Keyword fallback before architecture exists.
+- Risk-based implementation model selection.
+- Review-pass selection and injection into the generic review prompt.
+- Routing decisions recorded in `state.json`.
+
+Still pending for later Milestone 2/5 work:
+
+- Separate specialized review stage execution.
+- Review pass aggregation from multiple artifacts.
 
 ## Milestone 3: Repo Context
 

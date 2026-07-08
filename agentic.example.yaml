@@ -38,6 +38,19 @@ gates:
   require_tests_before_review: true
   block_on_review_findings: [blocking, security]
 risk_routing:
-  high_risk_keywords: [auth, authorization, billing, payment, migration, encryption, concurrency, data loss]
-  escalate_to: best
-
+  default_level: low
+  implementation_models:
+    low: coding
+    medium: coding
+    high: best
+    critical: best
+  review_passes:
+    low: [correctness, tests]
+    medium: [correctness, architecture, tests]
+    high: [correctness, architecture, security, tests]
+    critical: [correctness, architecture, security, tests, migration_or_rollback]
+  require_human_approval: [high, critical]
+  require_manual_merge: [critical]
+  keyword_fallback:
+    level: high
+    high_risk_keywords: [auth, authorization, billing, payment, migration, encryption, concurrency, data loss]

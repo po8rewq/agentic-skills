@@ -94,8 +94,8 @@ run-pipeline --dry-run --skip-approval --task "Preview the workflow"
 
 Every run stores the task, merged config snapshot, prompts, provider outputs, command
 results, state, and PR context below `.ai/runs/<timestamp>-<task>/`. Resume skips
-completed stages. High-risk task keywords automatically escalate architecture,
-implementation, and review to the configured best model.
+completed stages. Architecture risk metadata drives later routing decisions, with
+task-keyword risk detection as a fallback before architecture exists.
 
 ### Requirements and architecture gates
 
@@ -119,6 +119,51 @@ Gate behavior:
 
 `--skip-approval` bypasses approval prompts for non-interactive runs, but it does
 not bypass `blocked` gates.
+
+### Risk routing
+
+Architecture output includes:
+
+```yaml
+risk:
+  level: low # low | medium | high | critical
+  reasons: []
+  touches: []
+  estimated_files_changed: 0
+  user_data_impact: none
+  rollback_complexity: low
+```
+
+After architecture runs, the pipeline uses `risk.level` as the source of truth for
+implementation routing and review planning. If architecture has not run yet, the
+runner falls back to `risk_routing.keyword_fallback.high_risk_keywords`.
+
+Configure routing in `agentic.yaml`:
+
+```yaml
+risk_routing:
+  default_level: low
+  implementation_models:
+    low: coding
+    medium: coding
+    high: best
+    critical: best
+  review_passes:
+    low: [correctness, tests]
+    medium: [correctness, architecture, tests]
+    high: [correctness, architecture, security, tests]
+    critical: [correctness, architecture, security, tests, migration_or_rollback]
+  require_human_approval: [high, critical]
+  require_manual_merge: [critical]
+  keyword_fallback:
+    level: high
+    high_risk_keywords: [auth, authorization, billing, payment, migration, encryption, concurrency, data loss]
+```
+
+The runner records routing decisions in `state.json`, including the implementation
+model, selected review passes, effective risk level, and whether manual merge is
+required. The generic review stage receives the selected review passes in its prompt;
+later specialized review stages can consume the same routing data.
 
 The runner creates an `ai/<task>` branch when invoked in a Git repository. A dirty
 worktree is rejected by default. GitHub uses `gh`; Gitea uses `tea`. Merge remains a
