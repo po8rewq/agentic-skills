@@ -366,6 +366,9 @@ If routing requires manual merge, the PR body calls that out explicitly. The run
 does not automatically commit artifacts, commit implementation changes, or merge
 PRs. Artifact commits are intentionally parked for now; if added later they should
 be explicitly opt-in.
+For Gitea, the current branch must already be pushed to `origin` before automatic
+PR creation can succeed; the runner now reports that explicitly when the branch is
+still local-only.
 
 ## Configuration and development
 
