@@ -136,6 +136,15 @@ class PipelineTests(unittest.TestCase):
             (skill / "output-schema.yaml").write_text("required_metadata: [rollback_plan]\n")
             PipelineRunner._validate_output(skill, "```yaml agentic\nrollback_plan: null\n```\n")
 
+    def test_output_schema_rejects_invalid_metadata_enum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "output-schema.yaml").write_text(
+                "required_metadata: [status]\nmetadata_enums:\n  status: [ready, risky, blocked]\n"
+            )
+            with self.assertRaisesRegex(RuntimeError, "invalid metadata values"):
+                PipelineRunner._validate_output(skill, "```yaml agentic\nstatus: maybe\n```\n")
+
     def test_requirements_blocked_gate_stops_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = self.runner(Path(directory))
@@ -180,13 +189,18 @@ class PipelineTests(unittest.TestCase):
             runner = self.runner(Path(directory))
             runner.prepare()
             artifact = runner.run_dir / "design.md"
+            runner._record_stage_routing("architecture", "opus")
+            self.assertEqual(runner.state["routing"]["risk_level"], "low")
             artifact.write_text(ARCHITECTURE_READY.replace("level: low", "level: high"))
             approvals = []
             runner._approve = lambda stage, output_path, step: approvals.append(stage)
             requested = runner._enforce_stage_gate("architecture", artifact, {"id": "architecture", "output": "design.md"})
+            runner._record_stage_routing("architecture", "opus")
             self.assertTrue(requested)
             self.assertEqual(approvals, ["architecture"])
             self.assertEqual(runner.state["risk"]["level"], "high")
+            self.assertEqual(runner.state["routing"]["risk_level"], "high")
+            self.assertIn("security", runner.state["routing"]["review_passes"])
 
     def test_invalid_architecture_risk_level_fails_gate(self):
         with tempfile.TemporaryDirectory() as directory:

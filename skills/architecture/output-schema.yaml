@@ -14,4 +14,9 @@ required_metadata:
   - risk.estimated_files_changed
   - risk.user_data_impact
   - risk.rollback_complexity
+metadata_enums:
+  status: [ready, risky, blocked]
+  risk.level: [low, medium, high, critical]
+  risk.user_data_impact: [none, read, write, delete]
+  risk.rollback_complexity: [low, medium, high]
 required_sections: [Context, Proposed Design, Components and Interfaces, Data Flow, Error Handling, Security and Privacy, Alternatives, Rollout, Implementation Plan, Validation Plan]

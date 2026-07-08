@@ -43,7 +43,11 @@ Set `status` to:
 - `risky` when implementation can proceed only with explicit human approval.
 - `blocked` when the design is too unclear or unsafe to implement.
 
-Use `risk.level` values: `low`, `medium`, `high`, or `critical`.
+Use these risk values:
+
+- `risk.level`: `low`, `medium`, `high`, or `critical`.
+- `risk.user_data_impact`: `none`, `read`, `write`, or `delete`.
+- `risk.rollback_complexity`: `low`, `medium`, or `high`.
 
 Block implementation when affected modules are unclear, data or API contracts are
 unclear, migration or rollback strategy is unclear, security/auth behavior is

@@ -151,7 +151,7 @@ risk_routing:
 - Use risk to resolve the implementation model.
 - Keep keyword routing as a fallback only when architecture metadata is unavailable.
 
-### Milestone 2A status
+### Milestone 2 status
 
 Implemented:
 
@@ -161,8 +161,9 @@ Implemented:
 - Risk-based implementation model selection.
 - Review-pass selection and injection into the generic review prompt.
 - Routing decisions recorded in `state.json`.
+- Strict enum validation for gate status, risk level, user-data impact, and rollback complexity.
 
-Still pending for later Milestone 2/5 work:
+Deferred to Milestone 5:
 
 - Separate specialized review stage execution.
 - Review pass aggregation from multiple artifacts.

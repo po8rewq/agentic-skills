@@ -110,6 +110,8 @@ confidence: 0.86
 Requirements also report blocking questions, assumptions, acceptance criteria,
 non-goals, and test scenarios. Architecture also reports affected modules, planned
 files, contract changes, rollback information, and initial risk metadata.
+The runner validates required metadata fields and enum values declared by each
+skill's `output-schema.yaml`.
 
 Gate behavior:
 

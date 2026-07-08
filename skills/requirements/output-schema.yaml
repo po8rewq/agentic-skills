@@ -1,2 +1,4 @@
 required_metadata: [status, confidence, blocking_questions, assumptions, acceptance_criteria, non_goals, test_scenarios]
+metadata_enums:
+  status: [ready, risky, blocked]
 required_sections: [Summary, Assumptions, Functional Requirements, Non-Functional Requirements, Edge Cases, Acceptance Criteria, Open Questions, Suggested Test Scenarios]

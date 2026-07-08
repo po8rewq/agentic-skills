@@ -151,6 +151,8 @@ class PipelineRunner:
         output_path.write_text(result.output.rstrip() + "\n", encoding="utf-8")
         self._validate_output(skill_path.parent, result.output)
         gate_approval_requested = self._enforce_stage_gate(stage, output_path, step)
+        if stage == "architecture":
+            self._record_stage_routing(stage, model)
         output_log.write_text(result.output.rstrip() + "\n", encoding="utf-8")
         (self.logs_dir / f"{stage}.command.txt").write_text(shlex.join(result.command) + "\n", encoding="utf-8")
         if not gate_approval_requested and (
@@ -200,6 +202,13 @@ class PipelineRunner:
         missing_metadata = [name for name in schema.get("required_metadata", []) if not PipelineRunner._metadata_has(metadata, name)]
         if missing_metadata:
             raise RuntimeError(f"Provider output is missing required metadata: {', '.join(missing_metadata)}")
+        invalid_enums = []
+        for name, allowed in schema.get("metadata_enums", {}).items():
+            value = PipelineRunner._metadata_get(metadata, name)
+            if value is not None and value not in allowed:
+                invalid_enums.append(f"{name}={value!r} (expected one of {', '.join(map(str, allowed))})")
+        if invalid_enums:
+            raise RuntimeError(f"Provider output has invalid metadata values: {'; '.join(invalid_enums)}")
         headings = {match.group(1).strip().casefold() for match in re.finditer(r"^#{1,6}\s+(.+?)\s*$", output, re.M)}
         missing = [name for name in schema.get("required_sections", []) if name.casefold() not in headings]
         if missing:
