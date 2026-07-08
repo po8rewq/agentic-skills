@@ -1,0 +1,43 @@
+project:
+  name: my-api
+  default_branch: main
+runtime:
+  pipeline: default
+  skills_dir: .ai/skills
+  artifacts_dir: .ai/runs
+providers:
+  default: claude-code
+  available:
+    claude-code: {command: claude}
+    codex: {command: "codex exec"}
+models:
+  aliases: {cheap: claude-haiku-4-5, coding: gpt-5.1-codex, best: claude-opus-4-6}
+  by_stage:
+    requirements: cheap
+    architecture: best
+    implementation: coding
+    review: best
+    fix-review: coding
+commands:
+  install: pnpm install
+  lint: pnpm lint
+  typecheck: pnpm typecheck
+  test: pnpm test
+  build: pnpm build
+vcs:
+  type: git
+  require_clean_worktree: true
+  branch_prefix: ai/
+forge:
+  provider: github
+  create_pr: true
+  labels: [ai-generated]
+  reviewers: []
+gates:
+  require_approval_after: [requirements, architecture]
+  require_tests_before_review: true
+  block_on_review_findings: [blocking, security]
+risk_routing:
+  high_risk_keywords: [auth, authorization, billing, payment, migration, encryption, concurrency, data loss]
+  escalate_to: best
+

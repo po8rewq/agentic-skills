@@ -1,0 +1,331 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from .config import resolve_model
+from .forges import make_forge
+from .providers import make_provider
+from .vcs import Git
+
+
+def slugify(text: str, limit: int = 48) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
+    return (slug[:limit].rstrip("-") or "task")
+
+
+@dataclass
+class RunOptions:
+    task: str
+    pipeline_name: str
+    stage: str | None = None
+    resume: Path | None = None
+    model_overrides: dict[str, str] | None = None
+    skip_approval: bool = False
+    dry_run: bool = False
+    verbose: bool = False
+
+
+class PipelineRunner:
+    def __init__(self, repo: Path, config: dict[str, Any], pipeline: dict[str, Any], options: RunOptions):
+        self.repo, self.config, self.pipeline, self.options = repo, config, pipeline, options
+        self.git = Git(repo)
+        self.run_dir = options.resume or self._new_run_dir()
+        self.logs_dir = self.run_dir / "logs"
+        self.state_path = self.run_dir / "state.json"
+        self.state: dict[str, Any] = {"completed": [], "branch": None, "status": "running"}
+        self.test_results = ""
+
+    def _new_run_dir(self) -> Path:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        return Path(self.config["runtime"]["artifacts_dir"]) / f"{stamp}-{slugify(self.options.task)}"
+
+    def _save_state(self) -> None:
+        self.state_path.write_text(json.dumps(self.state, indent=2) + "\n", encoding="utf-8")
+
+    def prepare(self) -> None:
+        if self.options.resume:
+            if not self.run_dir.exists():
+                raise ValueError(f"Resume directory does not exist: {self.run_dir}")
+            if self.state_path.exists():
+                self.state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            task_path = self.run_dir / "task.md"
+            if not self.options.task and task_path.exists():
+                self.options.task = task_path.read_text(encoding="utf-8").removeprefix("# Task\n\n").strip()
+            self.logs_dir.mkdir(exist_ok=True)
+            return
+        if self.options.dry_run:
+            print(f"[dry-run] would create {self.run_dir}")
+            if self.git.is_repo():
+                branch = self.config["vcs"].get("branch_prefix", "ai/") + slugify(self.options.task)
+                self.state["branch"] = branch
+                print(f"[dry-run] would create branch {branch}")
+            return
+        self.logs_dir.mkdir(parents=True, exist_ok=False)
+        (self.run_dir / "task.md").write_text(f"# Task\n\n{self.options.task}\n", encoding="utf-8")
+        (self.run_dir / "config.snapshot.yaml").write_text(
+            yaml.safe_dump(self.config, sort_keys=False), encoding="utf-8"
+        )
+        if self.git.is_repo():
+            if self.config["vcs"].get("require_clean_worktree", True):
+                self.git.ensure_clean()
+            branch = self.config["vcs"].get("branch_prefix", "ai/") + slugify(self.options.task)
+            if not self.options.dry_run:
+                self.git.create_branch(branch)
+            self.state["branch"] = branch
+        self._save_state()
+
+    def _artifact(self, name: str) -> str:
+        path = self.run_dir / name
+        return path.read_text(encoding="utf-8") if path.exists() else "(not yet available)"
+
+    def _repo_context(self) -> str:
+        instructions = []
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            path = self.repo / name
+            if path.exists():
+                instructions.append(f"## {name}\n\n{path.read_text(encoding='utf-8')}")
+        return "\n\n".join(instructions) or "No repository instruction file was found."
+
+    def _prompt(self, step: dict[str, Any], skill_text: str) -> str:
+        sections = [
+            "# Pipeline task", self.options.task,
+            "# Skill instructions", skill_text,
+            "# Repository instructions", self._repo_context(),
+        ]
+        for item in step.get("inputs", []):
+            if item == "repo_context":
+                continue
+            if item == "git_diff":
+                value = self.git.diff() if self.git.is_repo() else "Not a git repository."
+            elif item == "test_results":
+                value = self.test_results or self._artifact("test-results.md")
+            else:
+                value = self._artifact(item)
+            sections += [f"# Input: {item}", value]
+        if step["id"] in {"implementation", "fix-review"}:
+            sections += [
+                "# Execution requirement",
+                "Work directly in the repository to implement the requested changes. "
+                "Afterwards, return a concise Markdown summary of changes and tests.",
+            ]
+        else:
+            sections += ["# Output requirement", "Return only the requested Markdown artifact."]
+        return "\n\n".join(sections) + "\n"
+
+    def _run_skill(self, step: dict[str, Any]) -> None:
+        stage = step["id"]
+        if stage == "review" and self.config["gates"].get("require_tests_before_review"):
+            if not self.test_results and not (self.run_dir / "test-results.md").exists():
+                raise RuntimeError("Review requires check results, but test-results.md does not exist")
+        skill_path = Path(self.config["runtime"]["skills_dir"]) / step["skill"] / "SKILL.md"
+        if not skill_path.exists():
+            raise ValueError(f"Skill not found: {skill_path}")
+        prompt = self._prompt(step, skill_path.read_text(encoding="utf-8"))
+        output_path = self.run_dir / step["output"]
+        prompt_path = self.logs_dir / f"{stage}.prompt.md"
+        output_log = self.logs_dir / f"{stage}.output.md"
+        model = resolve_model(stage, self.options.task, self.config, self.options.model_overrides or {})
+        provider_name = step.get("provider", self.config["providers"]["default"])
+        print(f"[{stage}] {provider_name} / {model} -> {output_path}")
+        if self.options.dry_run:
+            return
+        prompt_path.write_text(prompt, encoding="utf-8")
+        result = make_provider(provider_name, self.config, self.repo).run(prompt, model, stage)
+        output_path.write_text(result.output.rstrip() + "\n", encoding="utf-8")
+        self._validate_output(skill_path.parent, result.output)
+        gate_approval_requested = self._enforce_stage_gate(stage, output_path, step)
+        output_log.write_text(result.output.rstrip() + "\n", encoding="utf-8")
+        (self.logs_dir / f"{stage}.command.txt").write_text(shlex.join(result.command) + "\n", encoding="utf-8")
+        if not gate_approval_requested and (
+            step.get("approval") or stage in self.config["gates"].get("require_approval_after", [])
+        ):
+            self._approve(stage, output_path, step)
+
+    def _approve(self, stage: str, output_path: Path, step: dict[str, Any]) -> None:
+        if self.options.skip_approval:
+            return
+        while True:
+            answer = input(f"Approve {stage} at {output_path}? [y/N/r/e] ").strip().casefold()
+            if answer == "y":
+                return
+            if answer == "r":
+                self._run_skill({**step, "approval": False})
+                continue
+            if answer == "e":
+                editor = shlex.split(self.config.get("editor") or os.environ.get("EDITOR", "vi"))
+                subprocess.run(editor + [str(output_path)], check=False)
+                continue
+            self.state["status"] = "stopped"
+            self._save_state()
+            raise RuntimeError(f"Pipeline stopped at approval gate: {stage}")
+
+    @staticmethod
+    def _validate_output(skill_dir: Path, output: str) -> None:
+        schema_path = skill_dir / "output-schema.yaml"
+        if not schema_path.exists():
+            return
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+        metadata = PipelineRunner._extract_agentic_yaml(output) if schema.get("required_metadata") else {}
+        missing_metadata = [name for name in schema.get("required_metadata", []) if not PipelineRunner._metadata_has(metadata, name)]
+        if missing_metadata:
+            raise RuntimeError(f"Provider output is missing required metadata: {', '.join(missing_metadata)}")
+        headings = {match.group(1).strip().casefold() for match in re.finditer(r"^#{1,6}\s+(.+?)\s*$", output, re.M)}
+        missing = [name for name in schema.get("required_sections", []) if name.casefold() not in headings]
+        if missing:
+            raise RuntimeError(f"Provider output is missing required sections: {', '.join(missing)}")
+
+    @staticmethod
+    def _extract_agentic_yaml(output: str) -> dict[str, Any]:
+        match = re.search(r"\A\s*```ya?ml\s+agentic\s*\n(.*?)\n```\s*", output, re.S | re.I)
+        if not match:
+            raise RuntimeError("Provider output is missing required ```yaml agentic``` metadata block")
+        try:
+            value = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError as exc:
+            raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("Provider output agentic metadata must be a YAML mapping")
+        return value
+
+    @staticmethod
+    def _metadata_get(metadata: dict[str, Any], dotted_key: str) -> Any:
+        value: Any = metadata
+        for part in dotted_key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+        return value
+
+    @staticmethod
+    def _metadata_has(metadata: dict[str, Any], dotted_key: str) -> bool:
+        value: Any = metadata
+        for part in dotted_key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                return False
+            value = value[part]
+        return True
+
+    def _load_stage_metadata(self, artifact_name: str) -> dict[str, Any]:
+        return self._extract_agentic_yaml(self._artifact(artifact_name))
+
+    def _record_stage_metadata(self, stage: str, metadata: dict[str, Any]) -> None:
+        stage_state: dict[str, Any] = {}
+        if "status" in metadata:
+            stage_state["status"] = metadata["status"]
+        if "confidence" in metadata:
+            stage_state["confidence"] = metadata["confidence"]
+        if "risk" in metadata:
+            stage_state["risk"] = metadata["risk"]
+            self.state["risk"] = metadata["risk"]
+        self.state.setdefault("stages", {})[stage] = stage_state
+
+    def _enforce_stage_gate(self, stage: str, output_path: Path, step: dict[str, Any]) -> bool:
+        if stage not in {"requirements", "architecture"}:
+            return False
+        metadata = self._load_stage_metadata(step["output"])
+        self._record_stage_metadata(stage, metadata)
+        status = str(metadata.get("status", "")).casefold()
+        if status not in {"ready", "risky", "blocked"}:
+            raise RuntimeError(f"{stage} gate metadata has invalid status: {metadata.get('status')!r}")
+        if status == "blocked":
+            self.state["status"] = "stopped"
+            self._save_state()
+            raise RuntimeError(f"{stage} gate blocked implementation; see {output_path}")
+        risk_level = str(self._metadata_get(metadata, "risk.level") or "").casefold()
+        approval_required = status == "risky" or risk_level in {"high", "critical"}
+        if approval_required:
+            self._approve(stage, output_path, step)
+            return True
+        return False
+
+    def _run_commands(self, step: dict[str, Any]) -> None:
+        lines = [f"# {step['id']} Results", ""]
+        failed = False
+        for name in step.get("commands", []):
+            command = self.config["commands"].get(name)
+            if not command:
+                lines += [f"## {name}", "", "Skipped: command is not configured.", ""]
+                continue
+            print(f"[{step['id']}] $ {command}")
+            if self.options.dry_run:
+                continue
+            result = subprocess.run(command, cwd=self.repo, shell=True, text=True, capture_output=True)
+            combined = (result.stdout + result.stderr).strip()
+            lines += [f"## {name}", "", f"Exit code: {result.returncode}", "", "```text", combined, "```", ""]
+            failed |= result.returncode != 0
+            if self.options.verbose and combined:
+                print(combined)
+        self.test_results = "\n".join(lines)
+        if not self.options.dry_run:
+            (self.run_dir / "test-results.md").write_text(self.test_results, encoding="utf-8")
+        if failed:
+            raise RuntimeError(f"Command group '{step['id']}' failed; see {self.run_dir / 'test-results.md'}")
+
+    def _condition(self, condition: str | None) -> bool:
+        if not condition:
+            return True
+        if condition == "review_has_blocking_findings":
+            review = self._artifact("review.md").casefold()
+            verdict_blocked = bool(re.search(r"##\s+verdict\s*\n+\s*blocked\b", review))
+            configured = self.config["gates"].get("block_on_review_findings", [])
+            has_finding = any(
+                re.search(rf"###\s+{re.escape(word.casefold())}\s*\n+(?:(?!\n###|\n##).)*?(?:^-\s|^-\s*\[[ x]\])", review, re.M | re.S)
+                for word in configured
+            )
+            return verdict_blocked or has_finding
+        if condition == "forge_create_pr_enabled":
+            return bool(self.config["forge"].get("create_pr"))
+        raise ValueError(f"Unknown pipeline condition: {condition}")
+
+    def _create_pr(self) -> None:
+        forge = make_forge(self.config, self.repo)
+        if forge is None:
+            raise RuntimeError("PR creation is enabled but no supported forge is configured")
+        body = self.run_dir / "pr-body.md"
+        body.write_text(
+            f"## Task\n\n{self.options.task}\n\n"
+            f"## Requirements\n\n{self._artifact('requirements.md')}\n\n"
+            f"## Design\n\n{self._artifact('design.md')}\n\n"
+            f"## Checks\n\n{self._artifact('test-results.md')}\n",
+            encoding="utf-8",
+        )
+        url = forge.create_pr(self.options.task.splitlines()[0][:120], body, self.config["project"]["default_branch"])
+        (self.run_dir / "pr-url.txt").write_text(url + "\n", encoding="utf-8")
+        print(f"Pull request: {url}")
+
+    def run(self) -> Path:
+        self.prepare()
+        completed = set(self.state.get("completed", []))
+        selected = [s for s in self.pipeline["steps"] if not self.options.stage or s["id"] == self.options.stage]
+        if self.options.stage and not selected:
+            raise ValueError(f"Stage not found in pipeline: {self.options.stage}")
+        for step in selected:
+            stage = step["id"]
+            if stage in completed or not self._condition(step.get("condition")):
+                continue
+            if step.get("type", "skill") == "skill":
+                self._run_skill(step)
+            elif step["type"] == "command_group":
+                self._run_commands(step)
+            elif step["type"] == "forge_pr":
+                if not self.options.dry_run:
+                    self._create_pr()
+            else:
+                raise ValueError(f"Unknown step type: {step['type']}")
+            if not self.options.dry_run:
+                self.state.setdefault("completed", []).append(stage)
+                self._save_state()
+        if not self.options.dry_run:
+            self.state["status"] = "completed"
+            self._save_state()
+        return self.run_dir

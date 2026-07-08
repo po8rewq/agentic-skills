@@ -1,0 +1,34 @@
+steps:
+  - id: requirements
+    skill: requirements
+    output: requirements.md
+    approval: true
+  - id: architecture
+    skill: architecture
+    inputs: [requirements.md, repo_context]
+    output: design.md
+    approval: true
+  - id: implementation
+    skill: implementation
+    inputs: [requirements.md, design.md, repo_context]
+    output: implementation-notes.md
+  - id: checks
+    type: command_group
+    commands: [lint, typecheck, test, build]
+  - id: review
+    skill: review
+    inputs: [requirements.md, design.md, git_diff, test_results]
+    output: review.md
+    approval: true
+  - id: fix-review
+    skill: fix-review
+    condition: review_has_blocking_findings
+    inputs: [review.md, git_diff]
+    output: fix-review.md
+  - id: final-checks
+    type: command_group
+    commands: [lint, typecheck, test, build]
+  - id: pull-request
+    type: forge_pr
+    condition: forge_create_pr_enabled
+

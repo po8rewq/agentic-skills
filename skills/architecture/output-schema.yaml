@@ -1,0 +1,17 @@
+required_metadata:
+  - status
+  - confidence
+  - affected_modules
+  - files_to_change
+  - data_model_changes
+  - api_changes
+  - security_considerations
+  - rollback_plan
+  - implementation_plan
+  - risk.level
+  - risk.reasons
+  - risk.touches
+  - risk.estimated_files_changed
+  - risk.user_data_impact
+  - risk.rollback_complexity
+required_sections: [Context, Proposed Design, Components and Interfaces, Data Flow, Error Handling, Security and Privacy, Alternatives, Rollout, Implementation Plan, Validation Plan]

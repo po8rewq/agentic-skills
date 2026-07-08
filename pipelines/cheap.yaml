@@ -1,0 +1,16 @@
+steps:
+  - id: requirements
+    skill: requirements
+    output: requirements.md
+  - id: implementation
+    skill: implementation
+    inputs: [requirements.md, repo_context]
+    output: implementation-notes.md
+  - id: checks
+    type: command_group
+    commands: [lint, test]
+  - id: review
+    skill: review
+    inputs: [requirements.md, git_diff, test_results]
+    output: review.md
+
