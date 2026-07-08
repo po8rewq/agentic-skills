@@ -88,7 +88,7 @@ class PipelineRunner:
         path = self.run_dir / name
         return path.read_text(encoding="utf-8") if path.exists() else "(not yet available)"
 
-    def _repo_context(self) -> str:
+    def _repository_instructions(self) -> str:
         instructions = []
         for name in ("AGENTS.md", "CLAUDE.md"):
             path = self.repo / name
@@ -96,11 +96,27 @@ class PipelineRunner:
                 instructions.append(f"## {name}\n\n{path.read_text(encoding='utf-8')}")
         return "\n\n".join(instructions) or "No repository instruction file was found."
 
+    def _configured_context_files(self, stage: str) -> list[Path]:
+        context_dir = Path(self.config["context"]["dir"])
+        return [context_dir / name for name in self.config.get("context", {}).get(stage, [])]
+
+    def _repo_context(self, stage: str) -> str:
+        sections = []
+        for path in self._configured_context_files(stage):
+            if path.exists():
+                try:
+                    label = path.relative_to(self.repo)
+                except ValueError:
+                    label = path
+                sections.append(f"## {label}\n\n{path.read_text(encoding='utf-8')}")
+        return "\n\n".join(sections) or "No configured repo context file was found for this stage."
+
     def _prompt(self, step: dict[str, Any], skill_text: str) -> str:
         sections = [
             "# Pipeline task", self.options.task,
             "# Skill instructions", skill_text,
-            "# Repository instructions", self._repo_context(),
+            "# Repository instructions", self._repository_instructions(),
+            "# Repository context", self._repo_context(step["id"]),
         ]
         if step["id"] == "review":
             review_passes = self._selected_review_passes()

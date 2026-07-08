@@ -24,6 +24,29 @@ commands:
   typecheck: pnpm typecheck
   test: pnpm test
   build: pnpm build
+context:
+  dir: .ai/context
+  requirements: []
+  architecture:
+    - repo-map.md
+    - module-boundaries.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+    - dependency-map.md
+    - ownership.md
+  implementation:
+    - repo-map.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+  review:
+    - repo-map.md
+    - module-boundaries.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+    - dependency-map.md
 vcs:
   type: git
   require_clean_worktree: true

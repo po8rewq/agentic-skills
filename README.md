@@ -187,6 +187,48 @@ model, selected review passes, effective risk level, and whether manual merge is
 required. The generic review stage receives the selected review passes in its prompt;
 later specialized review stages can consume the same routing data.
 
+### Repo context
+
+Agents can receive compact repository context from `.ai/context`. Install starter
+templates with:
+
+```bash
+install-agentic-skills --with-context .ai/skills
+```
+
+Then fill in the generated files for the project. Configure which files each stage
+receives:
+
+```yaml
+context:
+  dir: .ai/context
+  requirements: []
+  architecture:
+    - repo-map.md
+    - module-boundaries.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+    - dependency-map.md
+    - ownership.md
+  implementation:
+    - repo-map.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+  review:
+    - repo-map.md
+    - module-boundaries.md
+    - test-commands.md
+    - coding-conventions.md
+    - dangerous-areas.md
+    - dependency-map.md
+```
+
+Missing context files are skipped. This keeps new projects usable before the
+templates are filled in, while letting mature repos give architecture and review
+agents a richer map than implementation needs.
+
 The runner creates an `ai/<task>` branch when invoked in a Git repository. A dirty
 worktree is rejected by default. GitHub uses `gh`; Gitea uses `tea`. Merge remains a
 human action.

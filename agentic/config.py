@@ -37,6 +37,33 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "commands": {},
+    "context": {
+        "dir": ".ai/context",
+        "requirements": [],
+        "architecture": [
+            "repo-map.md",
+            "module-boundaries.md",
+            "test-commands.md",
+            "coding-conventions.md",
+            "dangerous-areas.md",
+            "dependency-map.md",
+            "ownership.md",
+        ],
+        "implementation": [
+            "repo-map.md",
+            "test-commands.md",
+            "coding-conventions.md",
+            "dangerous-areas.md",
+        ],
+        "review": [
+            "repo-map.md",
+            "module-boundaries.md",
+            "test-commands.md",
+            "coding-conventions.md",
+            "dangerous-areas.md",
+            "dependency-map.md",
+        ],
+    },
     "vcs": {"type": "git", "require_clean_worktree": True, "branch_prefix": "ai/"},
     "forge": {"provider": "none", "create_pr": False, "labels": [], "reviewers": []},
     "gates": {
@@ -99,6 +126,8 @@ def load_config(repo: Path, path: Path | None = None) -> dict[str, Any]:
     for key in ("skills_dir", "pipelines_dir", "artifacts_dir"):
         p = Path(config["runtime"][key]).expanduser()
         config["runtime"][key] = str(p if p.is_absolute() else repo / p)
+    context_dir = Path(config["context"]["dir"]).expanduser()
+    config["context"]["dir"] = str(context_dir if context_dir.is_absolute() else repo / context_dir)
     validate_config(config)
     return config
 
@@ -132,6 +161,9 @@ def validate_config(config: dict[str, Any]) -> None:
     fallback = risk_routing.get("keyword_fallback", {})
     if fallback.get("level") not in RISK_LEVELS:
         errors.append(f"risk_routing.keyword_fallback.level must be one of {', '.join(RISK_LEVELS)}")
+    for stage in ("requirements", "architecture", "implementation", "review"):
+        if not isinstance(config.get("context", {}).get(stage, []), list):
+            errors.append(f"context.{stage} must be a list of file names")
     if errors:
         raise ValueError("Configuration errors:\n- " + "\n- ".join(errors))
 

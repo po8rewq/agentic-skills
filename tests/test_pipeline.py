@@ -240,6 +240,30 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("# Required review passes", prompt)
             self.assertIn("- security", prompt)
 
+    def test_prompt_includes_stage_specific_repo_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context_dir = root / ".ai" / "context"
+            context_dir.mkdir(parents=True)
+            (context_dir / "repo-map.md").write_text("# Repo Map\n\nArchitecture and implementation context.\n")
+            (context_dir / "module-boundaries.md").write_text("# Module Boundaries\n\nArchitecture-only context.\n")
+            runner = self.runner(root, task="rename button")
+            runner.config["context"]["architecture"] = ["repo-map.md", "module-boundaries.md"]
+            runner.config["context"]["implementation"] = ["repo-map.md"]
+
+            architecture_prompt = runner._prompt({"id": "architecture", "inputs": []}, "Architecture skill")
+            implementation_prompt = runner._prompt({"id": "implementation", "inputs": []}, "Implementation skill")
+
+            self.assertIn("Architecture-only context", architecture_prompt)
+            self.assertIn("Architecture and implementation context", implementation_prompt)
+            self.assertNotIn("Architecture-only context", implementation_prompt)
+
+    def test_prompt_handles_missing_repo_context_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="rename button")
+            prompt = runner._prompt({"id": "architecture", "inputs": []}, "Architecture skill")
+            self.assertIn("No configured repo context file was found", prompt)
+
     def test_stage_routing_records_review_passes_and_manual_merge(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = self.runner(Path(directory), task="rename button")

@@ -1,3 +1,5 @@
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +8,11 @@ from agentic.install import main
 
 
 class InstallTests(unittest.TestCase):
+    def run_installer(self, args):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            return main(args)
+
     def test_installs_skills_only_by_default(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -14,7 +21,7 @@ class InstallTests(unittest.TestCase):
             (source / "demo.md").write_text("skill\n")
             destination = root / "project" / ".ai" / "skills"
 
-            self.assertEqual(main(["--source", str(source), str(destination)]), 0)
+            self.assertEqual(self.run_installer(["--source", str(source), str(destination)]), 0)
 
             self.assertTrue((destination / "demo.md").exists())
             self.assertFalse((root / "project" / ".ai" / "context").exists())
@@ -36,7 +43,7 @@ class InstallTests(unittest.TestCase):
 
             project = root / "project"
             self.assertEqual(
-                main(
+                self.run_installer(
                     [
                         "--source",
                         str(skills_source),
@@ -70,9 +77,9 @@ class InstallTests(unittest.TestCase):
             (source / "demo.md").write_text("skill\n")
 
             with self.assertRaises(SystemExit):
-                main(["--source", str(source), str(destination)])
+                self.run_installer(["--source", str(source), str(destination)])
 
-            self.assertEqual(main(["--force", "--source", str(source), str(destination)]), 0)
+            self.assertEqual(self.run_installer(["--force", "--source", str(source), str(destination)]), 0)
             self.assertTrue((destination / "demo.md").exists())
 
 

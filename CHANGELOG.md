@@ -8,6 +8,7 @@
 - Preserved explicit `--model` overrides over automatic risk routing.
 - Added enum validation for gate and risk metadata.
 - Added optional context and memory template installation.
+- Added stage-specific repo context loading for pipeline prompts.
 
 ## 0.1.0 - 2026-07-07
 

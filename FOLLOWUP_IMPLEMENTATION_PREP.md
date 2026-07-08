@@ -216,6 +216,17 @@ Extend `install-agentic-skills` with:
 
 Default behavior should remain skill-only to avoid surprising writes.
 
+### Milestone 3 status
+
+Implemented:
+
+- Context templates under `templates/context`.
+- Memory templates under `templates/memory`.
+- Optional installer flags for context and memory templates.
+- Stage-specific `context` config.
+- Prompt loading for configured repo context files.
+- Missing context files are skipped so projects can adopt context incrementally.
+
 ## Milestone 4: Evaluation Harness
 
 Goal: write `.ai/runs/<run-id>/evaluation.yaml` every run.
