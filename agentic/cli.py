@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import load_config, load_pipeline
+from .config import CONFIG_FILENAMES, load_config, load_pipeline, resolve_config_path
 from .forges import make_forge
 from .pipeline import PipelineRunner, RunOptions
 
@@ -39,6 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     repo = Path.cwd().resolve()
     try:
+        config_path = resolve_config_path(repo, args.config)
+        if args.config is None and config_path is None:
+            print(
+                f"warning: no project config found; using built-in defaults "
+                f"(searched {', '.join(CONFIG_FILENAMES)})",
+                file=sys.stderr,
+            )
         config = load_config(repo, args.config)
         task = args.task or ""
         if args.issue:
@@ -65,4 +72,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

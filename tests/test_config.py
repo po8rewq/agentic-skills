@@ -1,7 +1,11 @@
+import contextlib
+import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
+from agentic.cli import main as cli_main
 from agentic.config import deep_merge, load_config, resolve_model, review_passes_for_risk
 
 
@@ -20,6 +24,28 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config["runtime"]["artifacts_dir"], str(repo / "output"))
             self.assertEqual(config["context"]["dir"], str(repo / "context"))
             self.assertEqual(config["memory"]["dir"], str(repo / "memory"))
+
+    def test_load_config_accepts_yml_extension(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yml").write_text("providers:\n  default: codex\n", encoding="utf-8")
+            config = load_config(repo)
+            self.assertEqual(config["providers"]["default"], "codex")
+
+    def test_cli_warns_when_no_project_config_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            stderr = io.StringIO()
+            argv = ["--dry-run", "--task", "Preview the workflow"]
+            previous_cwd = Path.cwd()
+            os.chdir(repo)
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = cli_main(argv)
+            finally:
+                os.chdir(previous_cwd)
+            self.assertEqual(exit_code, 0)
+            self.assertIn("using built-in defaults", stderr.getvalue())
 
     def test_high_risk_routing_escalates_only_sensitive_stages(self):
         with tempfile.TemporaryDirectory() as directory:

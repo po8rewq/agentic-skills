@@ -9,6 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 RISK_LEVELS = ("low", "medium", "high", "critical")
+CONFIG_FILENAMES = ("agentic.yaml", "agentic.yml")
 
 DEFAULTS: dict[str, Any] = {
     "project": {"name": None, "default_branch": "main"},
@@ -140,9 +141,19 @@ def read_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
+def resolve_config_path(repo: Path, path: Path | None = None) -> Path | None:
+    if path is not None:
+        return path
+    for name in CONFIG_FILENAMES:
+        candidate = repo / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def load_config(repo: Path, path: Path | None = None) -> dict[str, Any]:
-    config_path = path or repo / "agentic.yaml"
-    local = read_yaml(config_path) if config_path.exists() else {}
+    config_path = resolve_config_path(repo, path)
+    local = read_yaml(config_path) if config_path and config_path.exists() else {}
     config = deep_merge(DEFAULTS, local)
     config["project"]["name"] = config["project"]["name"] or repo.name
     for key in ("skills_dir", "pipelines_dir", "artifacts_dir"):

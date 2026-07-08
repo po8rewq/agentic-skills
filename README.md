@@ -53,8 +53,8 @@ run-pipeline --task "Add password reset flow"
 
 Only two things live inside the target project:
 
-1. `agentic.yaml`, copied manually from `agentic.example.yaml` and customized for the
-   project.
+1. `agentic.yaml` or `agentic.yml`, copied manually from `agentic.example.yaml` and
+   customized for the project.
 2. `.ai/skills/`, copied by `install-agentic-skills` from this repository's `skills/`
    directory. The install command above names both paths explicitly: `--source` is the
    shared skills directory and the final argument is the project-local destination.
@@ -96,9 +96,11 @@ The shared Python package supplies the orchestrator and its scripts. This avoids
 maintaining duplicate script copies in every project, while vendoring the Markdown
 skills allows each project to pin or customize its agent behavior.
 
-Edit `agentic.yaml` for the project's commands, providers, gates, and forge. Vendored
-skills default to `.ai/skills`; the installed package's shared skills are used when no
-local override is configured.
+Edit `agentic.yaml` or `agentic.yml` for the project's commands, providers, gates, and
+forge. Vendored skills default to `.ai/skills`; the installed package's shared skills
+are used when no local override is configured. If neither config file exists,
+`run-pipeline` and `validate-agentic-config` print a warning before using built-in
+defaults.
 
 ## Run
 
