@@ -62,6 +62,21 @@ risk:
 ## Validation Plan
 """
 
+REVIEW_APPROVED = """```yaml agentic
+summary: "No issues found."
+status: approved
+findings: []
+```
+
+# Review Correctness
+## Summary
+No issues found.
+## Findings
+None.
+## Verdict
+Approved
+"""
+
 
 class PipelineTests(unittest.TestCase):
     def test_slugify(self):
@@ -148,6 +163,19 @@ class PipelineTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, "invalid metadata values"):
                 PipelineRunner._validate_output(skill, "```yaml agentic\nstatus: maybe\n```\n")
+
+    def test_specialized_review_schemas_accept_structured_output(self):
+        root = Path(__file__).resolve().parent.parent
+        for name in (
+            "review-correctness",
+            "review-tests",
+            "review-architecture",
+            "review-security",
+            "review-migrations",
+            "review-performance",
+        ):
+            with self.subTest(name=name):
+                PipelineRunner._validate_output(root / "skills" / name, REVIEW_APPROVED)
 
     def test_requirements_blocked_gate_stops_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:

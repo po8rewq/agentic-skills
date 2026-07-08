@@ -311,6 +311,14 @@ Goal: replace one generic review stage with selected review passes.
 - `skills/review-performance/SKILL.md`
 - `skills/review-performance/output-schema.yaml`
 
+### Skill contract status
+
+Implemented:
+
+- Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
+- Each specialized review skill emits a `yaml agentic` metadata block with `summary`, `status`, and `findings`.
+- Each specialized review skill preserves human-readable Summary, Findings, and Verdict sections.
+
 ### Runner behavior
 
 - Add a new pipeline step type, likely `review_group`.

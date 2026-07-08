@@ -11,6 +11,7 @@
 - Added stage-specific repo context loading for pipeline prompts.
 - Added cost-free `evaluation.yaml` run summaries.
 - Added stage-specific read-only repo memory loading for pipeline prompts.
+- Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
 
 ## 0.1.0 - 2026-07-07
 
