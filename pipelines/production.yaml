@@ -16,7 +16,7 @@ steps:
     type: command_group
     commands: [lint, typecheck, test, build]
   - id: review
-    skill: review
+    type: review_group
     inputs: [requirements.md, design.md, git_diff, test_results]
     output: review.md
     approval: true
@@ -31,4 +31,3 @@ steps:
   - id: pull-request
     type: forge_pr
     condition: forge_create_pr_enabled
-

@@ -189,6 +189,33 @@ model, selected review passes, effective risk level, and whether manual merge is
 required. The generic review stage receives the selected review passes in its prompt;
 later specialized review stages can consume the same routing data.
 
+### Specialized review
+
+The default pipelines use a `review_group` step that runs focused review passes
+selected from `risk_routing.review_passes`:
+
+```yaml
+- id: review
+  type: review_group
+  inputs: [requirements.md, design.md, git_diff, test_results]
+  output: review.md
+```
+
+Supported passes are:
+
+- `correctness`
+- `tests`
+- `architecture`
+- `security`
+- `migrations`
+- `migration_or_rollback`
+- `performance`
+
+Each pass writes its own artifact, such as `review-correctness.md` or
+`review-security.md`, with structured `yaml agentic` metadata. The runner also
+aggregates pass summaries and findings into `review.md` so the existing
+review-fix flow can consume one review artifact.
+
 ### Repo context
 
 Agents can receive compact repository context from `.ai/context`. Install starter

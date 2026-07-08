@@ -10,7 +10,6 @@ steps:
     type: command_group
     commands: [lint, test]
   - id: review
-    skill: review
+    type: review_group
     inputs: [requirements.md, git_diff, test_results]
     output: review.md
-

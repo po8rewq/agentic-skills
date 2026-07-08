@@ -341,6 +341,130 @@ class PipelineRunner:
     def _selected_review_passes(self, risk_level: str | None = None) -> list[str]:
         return review_passes_for_risk(self.config, risk_level or self._current_risk_level())
 
+    @staticmethod
+    def _review_skill_for_pass(review_pass: str) -> str:
+        mapping = {
+            "correctness": "review-correctness",
+            "tests": "review-tests",
+            "architecture": "review-architecture",
+            "security": "review-security",
+            "migrations": "review-migrations",
+            "migration_or_rollback": "review-migrations",
+            "performance": "review-performance",
+        }
+        if review_pass not in mapping:
+            raise ValueError(f"Unknown review pass: {review_pass}")
+        return mapping[review_pass]
+
+    @staticmethod
+    def _review_artifact_for_pass(review_pass: str) -> str:
+        artifact_name = "migrations" if review_pass == "migration_or_rollback" else review_pass
+        return f"review-{artifact_name}.md"
+
+    def _run_review_group(self, step: dict[str, Any]) -> None:
+        stage = step["id"]
+        if self.config["gates"].get("require_tests_before_review"):
+            if not self.test_results and not (self.run_dir / "test-results.md").exists():
+                raise RuntimeError("Review requires check results, but test-results.md does not exist")
+        passes = step.get("passes") or self._selected_review_passes()
+        model = self._resolve_stage_model(stage)
+        self._record_stage_routing(stage, model)
+        provider_name = step.get("provider", self.config["providers"]["default"])
+        pass_results: dict[str, dict[str, Any]] = {}
+        outputs: list[tuple[str, str, dict[str, Any]]] = []
+        for review_pass in passes:
+            skill = self._review_skill_for_pass(review_pass)
+            skill_path = Path(self.config["runtime"]["skills_dir"]) / skill / "SKILL.md"
+            if not skill_path.exists():
+                raise ValueError(f"Review skill not found: {skill_path}")
+            output_name = self._review_artifact_for_pass(review_pass)
+            output_path = self.run_dir / output_name
+            review_step = {**step, "id": stage, "skill": skill, "output": output_name}
+            prompt = self._prompt(review_step, skill_path.read_text(encoding="utf-8"))
+            print(f"[{stage}:{review_pass}] {provider_name} / {model} -> {output_path}")
+            if self.options.dry_run:
+                continue
+            (self.logs_dir / f"{stage}-{review_pass}.prompt.md").write_text(prompt, encoding="utf-8")
+            result = make_provider(provider_name, self.config, self.repo).run(prompt, model, f"{stage}:{review_pass}")
+            output = result.output.rstrip() + "\n"
+            output_path.write_text(output, encoding="utf-8")
+            self._validate_output(skill_path.parent, output)
+            metadata = self._extract_agentic_yaml(output)
+            pass_results[review_pass] = metadata
+            outputs.append((review_pass, output, metadata))
+            (self.logs_dir / f"{stage}-{review_pass}.output.md").write_text(output, encoding="utf-8")
+            (self.logs_dir / f"{stage}-{review_pass}.command.txt").write_text(
+                shlex.join(result.command) + "\n", encoding="utf-8"
+            )
+        if not self.options.dry_run:
+            self._write_review_aggregate(step["output"], outputs)
+            self.state["review"] = {"passes": pass_results}
+            review_state = self._review_group_state(pass_results)
+            self.state.setdefault("stages", {})[stage] = review_state
+            if step.get("approval") or stage in self.config["gates"].get("require_approval_after", []):
+                self._approve(stage, self.run_dir / step["output"], step)
+
+    def _review_group_state(self, pass_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        findings = [
+            finding
+            for metadata in pass_results.values()
+            for finding in metadata.get("findings", [])
+            if isinstance(finding, dict)
+        ]
+        blocking = [finding for finding in findings if finding.get("severity") == "blocking"]
+        important = [finding for finding in findings if finding.get("severity") == "important"]
+        optional = [finding for finding in findings if finding.get("severity") == "optional"]
+        status = "blocked" if blocking else "changes_requested" if important else "approved"
+        return {
+            "status": status,
+            "review_passes": list(pass_results.keys()),
+            "blocking_findings": len(blocking),
+            "important_findings": len(important),
+            "optional_findings": len(optional),
+        }
+
+    def _write_review_aggregate(self, output_name: str, outputs: list[tuple[str, str, dict[str, Any]]]) -> None:
+        pass_results = {review_pass: metadata for review_pass, _, metadata in outputs}
+        review_state = self._review_group_state(pass_results)
+        lines = [
+            "# Review",
+            "",
+            "## Summary",
+            "",
+            f"Overall status: {review_state['status']}",
+            "",
+            "## Review Passes",
+            "",
+        ]
+        for review_pass, _, metadata in outputs:
+            artifact = self._review_artifact_for_pass(review_pass)
+            lines += [f"- {review_pass}: {metadata.get('status', 'unknown')} (`{artifact}`)"]
+        lines += ["", "## Findings", ""]
+        findings = [
+            (review_pass, finding)
+            for review_pass, _, metadata in outputs
+            for finding in metadata.get("findings", [])
+            if isinstance(finding, dict)
+        ]
+        for severity in ("blocking", "important", "optional"):
+            lines += [f"### {severity.title()}", ""]
+            matching = [(review_pass, finding) for review_pass, finding in findings if finding.get("severity") == severity]
+            if not matching:
+                lines += ["None.", ""]
+                continue
+            for review_pass, finding in matching:
+                location = finding.get("file") or "unknown"
+                if finding.get("line") is not None:
+                    location = f"{location}:{finding['line']}"
+                category = finding.get("category") or review_pass
+                lines += [
+                    f"- [{category}] {location}: {finding.get('issue', '')}",
+                    f"  Recommendation: {finding.get('recommendation', '')}",
+                ]
+            lines.append("")
+        lines += ["## Verdict", "", "Blocked" if review_state["status"] == "blocked" else "Approved", ""]
+        (self.run_dir / output_name).write_text("\n".join(lines), encoding="utf-8")
+
     def _run_commands(self, step: dict[str, Any]) -> None:
         lines = [f"# {step['id']} Results", ""]
         failed = False
@@ -456,6 +580,8 @@ class PipelineRunner:
                     continue
                 if step.get("type", "skill") == "skill":
                     self._run_skill(step)
+                elif step["type"] == "review_group":
+                    self._run_review_group(step)
                 elif step["type"] == "command_group":
                     self._run_commands(step)
                 elif step["type"] == "forge_pr":

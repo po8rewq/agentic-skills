@@ -12,6 +12,7 @@
 - Added cost-free `evaluation.yaml` run summaries.
 - Added stage-specific read-only repo memory loading for pipeline prompts.
 - Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
+- Added `review_group` orchestration for risk-selected specialized review passes.
 
 ## 0.1.0 - 2026-07-07
 

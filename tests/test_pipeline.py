@@ -2,11 +2,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
 from agentic.config import load_config
 from agentic.pipeline import PipelineRunner, RunOptions, slugify
+from agentic.providers.base import ProviderResult
 
 
 REQUIREMENTS_READY = """```yaml agentic
@@ -77,6 +79,27 @@ None.
 Approved
 """
 
+REVIEW_BLOCKED = """```yaml agentic
+summary: "Security issue found."
+status: blocked
+findings:
+  - severity: blocking
+    category: security
+    file: app/auth.py
+    line: 12
+    issue: "Authorization check can be bypassed."
+    recommendation: "Enforce authorization before returning user data."
+```
+
+# Review Security
+## Summary
+Security issue found.
+## Findings
+- Authorization check can be bypassed.
+## Verdict
+Blocked
+"""
+
 
 class PipelineTests(unittest.TestCase):
     def test_slugify(self):
@@ -112,6 +135,37 @@ class PipelineTests(unittest.TestCase):
                 "# Review\n## Findings\n### Blocking\n\n- Missing check\n## Verdict\nBlocked\n"
             )
             self.assertTrue(runner._condition("review_has_blocking_findings"))
+
+    def test_review_group_runs_selected_passes_and_aggregates_results(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                output = REVIEW_BLOCKED if stage.endswith(":security") else REVIEW_APPROVED
+                return ProviderResult(output=output, command=["fake-review", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="harden auth")
+            runner.prepare()
+            runner.test_results = "# checks\npassed"
+            step = {
+                "id": "review",
+                "type": "review_group",
+                "passes": ["correctness", "security"],
+                "inputs": ["git_diff", "test_results"],
+                "output": "review.md",
+            }
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                runner._run_review_group(step)
+
+            self.assertTrue((runner.run_dir / "review-correctness.md").exists())
+            self.assertTrue((runner.run_dir / "review-security.md").exists())
+            aggregate = (runner.run_dir / "review.md").read_text()
+            self.assertIn("### Blocking", aggregate)
+            self.assertIn("[security] app/auth.py:12", aggregate)
+            self.assertIn("## Verdict\n\nBlocked", aggregate)
+            self.assertTrue(runner._condition("review_has_blocking_findings"))
+            self.assertEqual(runner.state["stages"]["review"]["status"], "blocked")
+            self.assertEqual(runner.state["stages"]["review"]["blocking_findings"], 1)
+            self.assertIn("security", runner.state["review"]["passes"])
 
     def test_command_results_are_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -176,6 +230,11 @@ class PipelineTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 PipelineRunner._validate_output(root / "skills" / name, REVIEW_APPROVED)
+
+    def test_review_pass_mapping(self):
+        self.assertEqual(PipelineRunner._review_skill_for_pass("correctness"), "review-correctness")
+        self.assertEqual(PipelineRunner._review_skill_for_pass("migration_or_rollback"), "review-migrations")
+        self.assertEqual(PipelineRunner._review_artifact_for_pass("migration_or_rollback"), "review-migrations.md")
 
     def test_requirements_blocked_gate_stops_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:

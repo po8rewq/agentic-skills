@@ -327,6 +327,16 @@ Implemented:
 - Aggregate findings into `review.md`.
 - Block fix-review on any `severity: blocking`.
 
+### Runner status
+
+Implemented:
+
+- Added `review_group` pipeline step type.
+- Selects review passes from `risk_routing.review_passes` unless explicit `passes` are configured on the step.
+- Writes per-pass artifacts and logs.
+- Aggregates pass results into `review.md`.
+- Stores review pass metadata and finding counts in `state.json` and `evaluation.yaml`.
+
 ## Milestone 7: PR Generation Upgrade
 
 Goal: PRs include requirements, architecture, risk, checks, and review artifacts.
