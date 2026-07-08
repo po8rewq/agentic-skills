@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-07-08
 
 - Added config-driven risk routing for implementation model selection.
 - Added review-pass planning from architecture risk metadata.
