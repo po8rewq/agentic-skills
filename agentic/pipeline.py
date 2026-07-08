@@ -533,18 +533,90 @@ class PipelineRunner:
             for finding in self._structured_review_findings()
         )
 
+    def _artifact_ref(self, name: str) -> str:
+        path = self.run_dir / name
+        try:
+            return str(path.relative_to(self.repo))
+        except ValueError:
+            return str(path)
+
+    def _checklist_status(self, status: str | None) -> str:
+        return "x" if status == "passed" else " "
+
+    def _review_artifact_refs(self) -> list[tuple[str, str]]:
+        passes = list(self.state.get("review", {}).get("passes", {}).keys())
+        if not passes:
+            passes = self.state.get("routing", {}).get("review_passes", [])
+        refs = []
+        for review_pass in passes:
+            artifact = self._review_artifact_for_pass(review_pass)
+            if (self.run_dir / artifact).exists():
+                refs.append((review_pass, self._artifact_ref(artifact)))
+        if (self.run_dir / "review.md").exists():
+            refs.insert(0, ("aggregate", self._artifact_ref("review.md")))
+        return refs
+
+    def _build_pr_body(self) -> str:
+        risk = self.state.get("risk", {"level": self._current_risk_level()})
+        routing = self.state.get("routing", {})
+        lines = [
+            "## Summary",
+            "",
+            self.options.task,
+            "",
+            "## Requirements",
+            "",
+            f"- Link: `{self._artifact_ref('requirements.md')}`",
+            "",
+            "## Architecture",
+            "",
+            f"- Link: `{self._artifact_ref('design.md')}`",
+            "",
+            "## Risk",
+            "",
+            f"Level: {risk.get('level', 'unknown')}",
+        ]
+        reasons = risk.get("reasons") or []
+        if reasons:
+            lines += ["", "Reasons:"]
+            lines += [f"- {reason}" for reason in reasons]
+        if routing.get("require_manual_merge"):
+            lines += ["", "> Manual merge required for this risk level."]
+        lines += ["", "## Checks", ""]
+        checks = self.state.get("checks", {})
+        if checks:
+            for name, data in checks.items():
+                status = data.get("status")
+                exit_code = data.get("exit_code")
+                suffix = f" (exit {exit_code})" if exit_code is not None else ""
+                lines.append(f"- [{self._checklist_status(status)}] {name}: {status}{suffix}")
+        else:
+            lines.append("- [ ] No checks recorded.")
+        lines += ["", "## Review Artifacts", ""]
+        review_refs = self._review_artifact_refs()
+        if review_refs:
+            lines += [f"- {name}: `{path}`" for name, path in review_refs]
+        else:
+            lines.append("- No review artifacts recorded.")
+        lines += [
+            "",
+            "## Evaluation",
+            "",
+            f"- Link: `{self._artifact_ref('evaluation.yaml')}`",
+            "",
+            "## Human Notes",
+            "",
+            "<!-- Human reviewer fills this in. -->",
+            "",
+        ]
+        return "\n".join(lines)
+
     def _create_pr(self) -> None:
         forge = make_forge(self.config, self.repo)
         if forge is None:
             raise RuntimeError("PR creation is enabled but no supported forge is configured")
         body = self.run_dir / "pr-body.md"
-        body.write_text(
-            f"## Task\n\n{self.options.task}\n\n"
-            f"## Requirements\n\n{self._artifact('requirements.md')}\n\n"
-            f"## Design\n\n{self._artifact('design.md')}\n\n"
-            f"## Checks\n\n{self._artifact('test-results.md')}\n",
-            encoding="utf-8",
-        )
+        body.write_text(self._build_pr_body(), encoding="utf-8")
         url = forge.create_pr(self.options.task.splitlines()[0][:120], body, self.config["project"]["default_branch"])
         (self.run_dir / "pr-url.txt").write_text(url + "\n", encoding="utf-8")
         self.state["pr"] = {"created": True, "url": url}

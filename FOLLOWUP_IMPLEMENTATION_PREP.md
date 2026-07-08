@@ -364,6 +364,14 @@ Goal: PRs include requirements, architecture, risk, checks, and review artifacts
 
 Keep merge manual. Critical-risk work should be clearly marked as manual-merge-only.
 
+### PR body status
+
+Implemented:
+
+- Generated PR bodies include task summary, requirements and architecture artifact links, risk level and reasons, check status, review artifacts, evaluation link, and human notes.
+- Critical/manual-merge routing is called out in the PR body.
+- Automatic artifact commits remain deferred and disabled.
+
 ## Recommended First Coding Pass
 
 Implement Milestone 1 and the architecture risk metadata shape from Milestone 2, but do not yet add specialized review passes.

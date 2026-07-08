@@ -478,6 +478,39 @@ class PipelineTests(unittest.TestCase):
             self.assertFalse(evaluation["outcome"]["pr_created"])
             self.assertNotIn("cost_usd", str(evaluation))
 
+    def test_pr_body_includes_artifacts_risk_checks_and_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.runner(root, task="Add audit logging")
+            runner.prepare()
+            for name in ("requirements.md", "design.md", "review.md", "review-security.md"):
+                (runner.run_dir / name).write_text(f"# {name}\n")
+            runner.state["risk"] = {"level": "critical", "reasons": ["Touches user data"]}
+            runner.state["routing"] = {
+                "review_passes": ["security"],
+                "implementation_model": "opus",
+                "require_manual_merge": True,
+            }
+            runner.state["checks"] = {
+                "lint": {"status": "passed", "exit_code": 0, "command": "pnpm lint"},
+                "test": {"status": "failed", "exit_code": 1, "command": "pnpm test"},
+            }
+            runner.state["review"] = {"passes": {"security": {"status": "blocked", "findings": []}}}
+
+            body = runner._build_pr_body()
+
+            self.assertIn("## Summary", body)
+            self.assertIn("Add audit logging", body)
+            self.assertIn("Level: critical", body)
+            self.assertIn("- Touches user data", body)
+            self.assertIn("> Manual merge required", body)
+            self.assertIn("- [x] lint: passed (exit 0)", body)
+            self.assertIn("- [ ] test: failed (exit 1)", body)
+            self.assertIn("aggregate:", body)
+            self.assertIn("review-security.md", body)
+            self.assertIn("evaluation.yaml", body)
+            self.assertIn("## Human Notes", body)
+
     def test_failed_command_writes_evaluation_yaml(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

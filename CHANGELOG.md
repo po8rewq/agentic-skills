@@ -14,6 +14,7 @@
 - Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
 - Added `review_group` orchestration for risk-selected specialized review passes.
 - Added structured review finding blocking behavior with security approval after fixes.
+- Generated richer PR bodies with artifact links, risk, checks, review artifacts, evaluation, and human notes.
 
 ## 0.1.0 - 2026-07-07
 

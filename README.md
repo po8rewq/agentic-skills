@@ -339,6 +339,22 @@ The runner creates an `ai/<task>` branch when invoked in a Git repository. A dir
 worktree is rejected by default. GitHub uses `gh`; Gitea uses `tea`. Merge remains a
 human action.
 
+### Pull requests
+
+When `forge.create_pr` is enabled, the runner writes `pr-body.md` and opens a pull
+request through the configured forge. The generated body includes:
+
+- task summary;
+- requirements and architecture artifact links;
+- risk level and reasons;
+- check status;
+- review artifact links;
+- evaluation artifact link;
+- a human notes section.
+
+If routing requires manual merge, the PR body calls that out explicitly. The runner
+does not automatically commit artifacts or merge PRs.
+
 ## Configuration and development
 
 Validate configuration with `validate-agentic-config`. Run tests with:
