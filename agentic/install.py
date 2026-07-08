@@ -53,4 +53,5 @@ def main(argv: list[str] | None = None) -> int:
         copy_tree(args.context_source, args.context_destination, args.force, parser, "context templates")
     if args.with_memory:
         copy_tree(args.memory_source, args.memory_destination, args.force, parser, "memory templates")
+    print("Recommendation: add `.ai/runs/` to your project's `.gitignore` to keep pipeline artifacts out of commits.")
     return 0

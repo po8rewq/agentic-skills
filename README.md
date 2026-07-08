@@ -31,6 +31,12 @@ Confirm the installation with:
 run-pipeline --help
 ```
 
+Add the pipeline artifacts directory to the consuming project's `.gitignore`:
+
+```gitignore
+.ai/runs/
+```
+
 ### What gets installed or copied
 
 The pipeline scripts are **not copied into the target project**. The editable pip
@@ -101,6 +107,8 @@ forge. Vendored skills default to `.ai/skills`; the installed package's shared s
 are used when no local override is configured. If neither config file exists,
 `run-pipeline` and `validate-agentic-config` print a warning before using built-in
 defaults.
+The `.ai/runs/` directory is operational trace output and is usually best kept out
+of version control unless you explicitly want to archive run artifacts in git.
 
 ## Run
 
