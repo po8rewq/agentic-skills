@@ -7,6 +7,7 @@
 - Recorded routing decisions in run state.
 - Preserved explicit `--model` overrides over automatic risk routing.
 - Added enum validation for gate and risk metadata.
+- Added optional context and memory template installation.
 
 ## 0.1.0 - 2026-07-07
 

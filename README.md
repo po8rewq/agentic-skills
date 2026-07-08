@@ -72,6 +72,26 @@ The command prints the resolved source and destination after copying. If `.ai/sk
 already exists, it stops without changing it; pass `--force` to replace the existing
 copy.
 
+Optionally install starter repo-context and repo-memory templates:
+
+```bash
+install-agentic-skills \
+  --with-context \
+  --with-memory \
+  .ai/skills
+```
+
+This also copies:
+
+```text
+.ai/context/
+.ai/memory/
+```
+
+Context and memory templates are not installed by default, because those files are
+intended to become project-specific documentation. Use `--context-destination` or
+`--memory-destination` to choose different locations.
+
 The shared Python package supplies the orchestrator and its scripts. This avoids
 maintaining duplicate script copies in every project, while vendoring the Markdown
 skills allows each project to pin or customize its agent behavior.
