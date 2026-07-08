@@ -136,6 +136,24 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((run_dir / "task.md").exists())
             self.assertTrue((run_dir / "config.snapshot.yaml").exists())
             self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "completed")
+            self.assertEqual(json.loads((run_dir / "state.json").read_text())["task"], "Do a thing")
+
+    def test_resume_recovers_task_from_state_when_task_file_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="Recover task")
+            runner.prepare()
+            run_dir = runner.run_dir
+            (run_dir / "task.md").unlink()
+
+            resumed = PipelineRunner(
+                Path(directory),
+                runner.config,
+                {"steps": []},
+                RunOptions(task="", pipeline_name="test", resume=run_dir, skip_approval=True),
+            )
+
+            resumed.prepare()
+            self.assertEqual(resumed.options.task, "Recover task")
 
     def test_prepare_rejects_dirty_repo_before_creating_run_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -553,6 +571,13 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("review-security.md", body)
             self.assertIn("evaluation.yaml", body)
             self.assertIn("## Human Notes", body)
+
+    def test_task_title_falls_back_to_run_id_when_task_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory), task="")
+            runner.run_dir = Path(directory) / "runs" / "2026-07-08-example-task"
+            runner.state = {"completed": [], "branch": None, "status": "running"}
+            self.assertEqual(runner._task_title(), "AI update: 2026-07-08-example-task")
 
     def test_failed_command_writes_evaluation_yaml(self):
         with tempfile.TemporaryDirectory() as directory:

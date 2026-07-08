@@ -56,6 +56,21 @@ class PipelineRunner:
     def run_id(self) -> str:
         return self.run_dir.name
 
+    def _load_task_from_artifacts(self) -> str:
+        state_task = self.state.get("task")
+        if isinstance(state_task, str) and state_task.strip():
+            return state_task.strip()
+        task_path = self.run_dir / "task.md"
+        if task_path.exists():
+            return task_path.read_text(encoding="utf-8").removeprefix("# Task\n\n").strip()
+        return ""
+
+    def _task_title(self) -> str:
+        task = (self.options.task or self._load_task_from_artifacts()).strip()
+        if task:
+            return task.splitlines()[0][:120]
+        return f"AI update: {self.run_id[:120]}"
+
     def _prepare_git_run(self) -> None:
         if not self.git.is_repo():
             return
@@ -71,9 +86,8 @@ class PipelineRunner:
                 raise ValueError(f"Resume directory does not exist: {self.run_dir}")
             if self.state_path.exists():
                 self.state = json.loads(self.state_path.read_text(encoding="utf-8"))
-            task_path = self.run_dir / "task.md"
-            if not self.options.task and task_path.exists():
-                self.options.task = task_path.read_text(encoding="utf-8").removeprefix("# Task\n\n").strip()
+            if not self.options.task:
+                self.options.task = self._load_task_from_artifacts()
             self.logs_dir.mkdir(exist_ok=True)
             return
         if self.options.dry_run:
@@ -90,6 +104,7 @@ class PipelineRunner:
         (self.run_dir / "config.snapshot.yaml").write_text(
             yaml.safe_dump(self.config, sort_keys=False), encoding="utf-8"
         )
+        self.state["task"] = self.options.task
         self._save_state()
 
     def _artifact(self, name: str) -> str:
@@ -625,7 +640,7 @@ class PipelineRunner:
             raise RuntimeError("PR creation is enabled but no supported forge is configured")
         body = self.run_dir / "pr-body.md"
         body.write_text(self._build_pr_body(), encoding="utf-8")
-        url = forge.create_pr(self.options.task.splitlines()[0][:120], body, self.config["project"]["default_branch"])
+        url = forge.create_pr(self._task_title(), body, self.config["project"]["default_branch"])
         (self.run_dir / "pr-url.txt").write_text(url + "\n", encoding="utf-8")
         self.state["pr"] = {"created": True, "url": url}
         print(f"Pull request: {url}")
