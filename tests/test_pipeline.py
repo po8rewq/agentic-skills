@@ -287,6 +287,15 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Verdict"):
                 PipelineRunner._validate_output(skill, "# Summary\n\nLooks good.\n")
 
+    def test_output_schema_accepts_bold_section_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "output-schema.yaml").write_text("required_sections: [Changes, Commands Run]\n")
+            PipelineRunner._validate_output(
+                skill,
+                "**Changes**\n- Updated eligibility filter.\n\n**Commands Run**\n- `pnpm test`\n",
+            )
+
     def test_output_schema_requires_agentic_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory)

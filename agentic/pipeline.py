@@ -251,7 +251,11 @@ class PipelineRunner:
                 invalid_enums.append(f"{name}={value!r} (expected one of {', '.join(map(str, allowed))})")
         if invalid_enums:
             raise RuntimeError(f"Provider output has invalid metadata values: {'; '.join(invalid_enums)}")
-        headings = {match.group(1).strip().casefold() for match in re.finditer(r"^#{1,6}\s+(.+?)\s*$", output, re.M)}
+        headings: set[str] = set()
+        for match in re.finditer(r"^(?:#{1,6}\s+(.+?)|\*\*(.+?)\*\*)\s*$", output, re.M):
+            title = next((group for group in match.groups() if group), "").strip().casefold()
+            if title:
+                headings.add(title)
         missing = [name for name in schema.get("required_sections", []) if name.casefold() not in headings]
         if missing:
             raise RuntimeError(f"Provider output is missing required sections: {', '.join(missing)}")
