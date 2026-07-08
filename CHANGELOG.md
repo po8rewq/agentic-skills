@@ -13,6 +13,7 @@
 - Added stage-specific read-only repo memory loading for pipeline prompts.
 - Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
 - Added `review_group` orchestration for risk-selected specialized review passes.
+- Added structured review finding blocking behavior with security approval after fixes.
 
 ## 0.1.0 - 2026-07-07
 

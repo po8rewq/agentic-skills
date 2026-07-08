@@ -100,6 +100,19 @@ Security issue found.
 Blocked
 """
 
+FIX_REVIEW_OUTPUT = """# Fix Review
+## Findings Resolved
+Resolved security blocking finding.
+## Changes
+Updated authorization check.
+## Tests
+Added regression test.
+## Unresolved Findings
+None.
+## Follow-up Recommendations
+None.
+"""
+
 
 class PipelineTests(unittest.TestCase):
     def test_slugify(self):
@@ -166,6 +179,59 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(runner.state["stages"]["review"]["status"], "blocked")
             self.assertEqual(runner.state["stages"]["review"]["blocking_findings"], 1)
             self.assertIn("security", runner.state["review"]["passes"])
+
+    def test_structured_review_findings_drive_blocking_condition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory))
+            runner.state["review"] = {
+                "passes": {
+                    "tests": {
+                        "findings": [
+                            {
+                                "severity": "important",
+                                "category": "tests",
+                                "file": "tests/test_app.py",
+                                "line": 10,
+                                "issue": "Weak assertion.",
+                                "recommendation": "Assert the behavior.",
+                            }
+                        ]
+                    }
+                }
+            }
+            self.assertFalse(runner._condition("review_has_blocking_findings"))
+            runner.state["review"]["passes"]["tests"]["findings"][0]["severity"] = "blocking"
+            self.assertTrue(runner._condition("review_has_blocking_findings"))
+
+    def test_security_blocking_review_requires_approval_after_fix(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=FIX_REVIEW_OUTPUT, command=["fake-fix-review"], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory))
+            runner.prepare()
+            runner.state["review"] = {
+                "passes": {
+                    "security": {
+                        "findings": [
+                            {
+                                "severity": "blocking",
+                                "category": "security",
+                                "file": "app/auth.py",
+                                "line": 12,
+                                "issue": "Authorization bypass.",
+                                "recommendation": "Check authorization.",
+                            }
+                        ]
+                    }
+                }
+            }
+            approvals = []
+            runner._approve = lambda stage, output_path, step: approvals.append((stage, output_path.name))
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                runner._run_skill({"id": "fix-review", "skill": "fix-review", "output": "fix-review.md"})
+            self.assertEqual(approvals, [("fix-review", "fix-review.md")])
 
     def test_command_results_are_persisted(self):
         with tempfile.TemporaryDirectory() as directory:

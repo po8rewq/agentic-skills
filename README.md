@@ -216,6 +216,10 @@ Each pass writes its own artifact, such as `review-correctness.md` or
 aggregates pass summaries and findings into `review.md` so the existing
 review-fix flow can consume one review artifact.
 
+Blocking structured findings trigger `fix-review`. Optional findings do not block
+by default. If the original review contained a blocking security finding, the
+runner requires approval after `fix-review` completes.
+
 ### Repo context
 
 Agents can receive compact repository context from `.ai/context`. Install starter

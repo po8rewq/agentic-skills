@@ -195,6 +195,8 @@ class PipelineRunner:
             step.get("approval") or stage in self.config["gates"].get("require_approval_after", [])
         ):
             self._approve(stage, output_path, step)
+        if stage == "fix-review" and self._review_has_security_blocking_findings():
+            self._approve(stage, output_path, step)
 
     def _resolve_stage_model(self, stage: str) -> str:
         risk_level = self._current_risk_level() if stage in {"architecture", "implementation", "review"} else None
@@ -500,6 +502,8 @@ class PipelineRunner:
         if not condition:
             return True
         if condition == "review_has_blocking_findings":
+            if self._structured_review_findings():
+                return self._review_has_blocking_findings()
             review = self._artifact("review.md").casefold()
             verdict_blocked = bool(re.search(r"##\s+verdict\s*\n+\s*blocked\b", review))
             configured = self.config["gates"].get("block_on_review_findings", [])
@@ -511,6 +515,23 @@ class PipelineRunner:
         if condition == "forge_create_pr_enabled":
             return bool(self.config["forge"].get("create_pr"))
         raise ValueError(f"Unknown pipeline condition: {condition}")
+
+    def _structured_review_findings(self) -> list[dict[str, Any]]:
+        return [
+            finding
+            for metadata in self.state.get("review", {}).get("passes", {}).values()
+            for finding in metadata.get("findings", [])
+            if isinstance(finding, dict)
+        ]
+
+    def _review_has_blocking_findings(self) -> bool:
+        return any(finding.get("severity") == "blocking" for finding in self._structured_review_findings())
+
+    def _review_has_security_blocking_findings(self) -> bool:
+        return any(
+            finding.get("severity") == "blocking" and finding.get("category") == "security"
+            for finding in self._structured_review_findings()
+        )
 
     def _create_pr(self) -> None:
         forge = make_forge(self.config, self.repo)

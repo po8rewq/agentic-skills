@@ -336,6 +336,8 @@ Implemented:
 - Writes per-pass artifacts and logs.
 - Aggregates pass results into `review.md`.
 - Stores review pass metadata and finding counts in `state.json` and `evaluation.yaml`.
+- Uses structured review findings to decide whether fix-review is required.
+- Requires approval after fix-review when the original review had a security blocking finding.
 
 ## Milestone 7: PR Generation Upgrade
 
