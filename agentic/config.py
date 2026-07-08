@@ -89,7 +89,13 @@ DEFAULTS: dict[str, Any] = {
         ],
     },
     "vcs": {"type": "git", "require_clean_worktree": True, "branch_prefix": "ai/"},
-    "forge": {"provider": "none", "create_pr": False, "labels": [], "reviewers": []},
+    "forge": {
+        "provider": "none",
+        "create_pr": False,
+        "auto_commit_push": False,
+        "labels": [],
+        "reviewers": [],
+    },
     "gates": {
         "require_approval_after": ["requirements", "architecture"],
         "require_tests_before_review": True,
@@ -181,6 +187,10 @@ def validate_config(config: dict[str, Any]) -> None:
         errors.append("only vcs.type=git is currently supported")
     if config.get("forge", {}).get("provider") not in {"github", "gitea", "gitlab", "none"}:
         errors.append("forge.provider must be github, gitea, gitlab, or none")
+    if not isinstance(config.get("forge", {}).get("create_pr"), bool):
+        errors.append("forge.create_pr must be a boolean")
+    if not isinstance(config.get("forge", {}).get("auto_commit_push"), bool):
+        errors.append("forge.auto_commit_push must be a boolean")
     for stage, alias in config.get("models", {}).get("by_stage", {}).items():
         aliases = config.get("models", {}).get("aliases", {})
         if alias not in aliases and not isinstance(alias, str):

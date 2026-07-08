@@ -634,10 +634,20 @@ class PipelineRunner:
         ]
         return "\n".join(lines)
 
+    def _auto_commit_and_push_for_pr(self) -> None:
+        artifacts_dir = Path(self.config["runtime"]["artifacts_dir"]).resolve()
+        self.git.stage_all_except([artifacts_dir])
+        if not self.git.has_staged_changes():
+            return
+        self.git.commit(f"AI: {self._task_title()}")
+        self.git.push_current_branch()
+
     def _create_pr(self) -> None:
         forge = make_forge(self.config, self.repo)
         if forge is None:
             raise RuntimeError("PR creation is enabled but no supported forge is configured")
+        if self.config["forge"].get("auto_commit_push"):
+            self._auto_commit_and_push_for_pr()
         body = self.run_dir / "pr-body.md"
         body.write_text(self._build_pr_body(), encoding="utf-8")
         url = forge.create_pr(self._task_title(), body, self.config["project"]["default_branch"])

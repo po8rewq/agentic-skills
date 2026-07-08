@@ -30,3 +30,21 @@ class Git:
     def current_branch(self) -> str:
         return self.run("branch", "--show-current")
 
+    def stage_all_except(self, excluded_paths: list[Path] | None = None) -> None:
+        self.run("add", "-A")
+        for path in excluded_paths or []:
+            try:
+                relative = path.relative_to(self.repo)
+            except ValueError:
+                continue
+            self.run("reset", "HEAD", "--", str(relative), check=False)
+
+    def has_staged_changes(self) -> bool:
+        return bool(self.run("diff", "--cached", "--name-only"))
+
+    def commit(self, message: str) -> None:
+        self.run("commit", "-m", message)
+
+    def push_current_branch(self, remote: str = "origin") -> None:
+        branch = self.current_branch()
+        self.run("push", "-u", remote, branch)

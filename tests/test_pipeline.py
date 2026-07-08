@@ -579,6 +579,22 @@ class PipelineTests(unittest.TestCase):
             runner.state = {"completed": [], "branch": None, "status": "running"}
             self.assertEqual(runner._task_title(), "AI update: 2026-07-08-example-task")
 
+    def test_auto_commit_and_push_for_pr_excludes_artifacts_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.runner(root, task="Add audit logging")
+            runner.config["runtime"]["artifacts_dir"] = str(root / "runs")
+
+            with patch.object(runner.git, "stage_all_except") as stage_all_except:
+                with patch.object(runner.git, "has_staged_changes", return_value=True):
+                    with patch.object(runner.git, "commit") as commit:
+                        with patch.object(runner.git, "push_current_branch") as push:
+                            runner._auto_commit_and_push_for_pr()
+
+            stage_all_except.assert_called_once_with([(root / "runs").resolve()])
+            commit.assert_called_once_with("AI: Add audit logging")
+            push.assert_called_once_with()
+
     def test_failed_command_writes_evaluation_yaml(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

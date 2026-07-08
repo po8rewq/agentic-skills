@@ -39,6 +39,13 @@ class ConfigTests(unittest.TestCase):
             config = load_config(repo)
             self.assertEqual(config["editor"], "code --wait")
 
+    def test_load_config_accepts_forge_auto_commit_push(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yaml").write_text("forge:\n  auto_commit_push: true\n", encoding="utf-8")
+            config = load_config(repo)
+            self.assertTrue(config["forge"]["auto_commit_push"])
+
     def test_cli_warns_when_no_project_config_exists(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -106,6 +113,13 @@ class ConfigTests(unittest.TestCase):
             repo = Path(directory)
             (repo / "agentic.yaml").write_text("editor:\n  command: code --wait\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "editor must be a string"):
+                load_config(repo)
+
+    def test_invalid_forge_auto_commit_push_config_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "agentic.yaml").write_text('forge:\n  auto_commit_push: "sometimes"\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "forge.auto_commit_push must be a boolean"):
                 load_config(repo)
 
 

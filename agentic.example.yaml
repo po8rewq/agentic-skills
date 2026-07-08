@@ -72,6 +72,7 @@ vcs:
 forge:
   provider: github
   create_pr: true
+  auto_commit_push: false
   labels: [ai-generated]
   reviewers: []
 gates:
