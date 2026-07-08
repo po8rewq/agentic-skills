@@ -353,7 +353,9 @@ request through the configured forge. The generated body includes:
 - a human notes section.
 
 If routing requires manual merge, the PR body calls that out explicitly. The runner
-does not automatically commit artifacts or merge PRs.
+does not automatically commit artifacts, commit implementation changes, or merge
+PRs. Artifact commits are intentionally parked for now; if added later they should
+be explicitly opt-in.
 
 ## Configuration and development
 

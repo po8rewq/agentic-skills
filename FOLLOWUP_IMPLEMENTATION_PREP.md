@@ -372,6 +372,13 @@ Implemented:
 - Critical/manual-merge routing is called out in the PR body.
 - Automatic artifact commits remain deferred and disabled.
 
+### Deferred: optional artifact commits
+
+Parking this for now by decision. The pipeline does not automatically commit run
+artifacts or implementation changes before PR creation. If added later, it should be
+explicitly opt-in, for example `pr.commit_artifacts: true`, because writing commits
+is a materially larger state-changing action than generating a PR body.
+
 ## Recommended First Coding Pass
 
 Implement Milestone 1 and the architecture risk metadata shape from Milestone 2, but do not yet add specialized review passes.
