@@ -153,8 +153,16 @@ Gate behavior:
 - `status: risky` requires human approval.
 - architecture `risk.level: high` or `risk.level: critical` requires human approval.
 
+When `requirements` returns `status: blocked`, the runner now records the
+explicit blocker reason and blocking questions in `state.json` and
+`evaluation.yaml`. Interactive runs also prompt for answers to those blocking
+questions, save the answers in `requirements-answers.md`, rerun the requirements
+stage, and regenerate `requirements.md` from the answered prompt.
+
 `--skip-approval` bypasses approval prompts for non-interactive runs, but it does
-not bypass `blocked` gates.
+not bypass `blocked` gates. In non-interactive runs, blocked requirements fail
+fast with the blocking questions printed in the error message instead of trying
+to prompt for answers.
 
 At approval prompts, `r` reruns the current stage and `e` opens the current
 artifact in an editor before returning to the same prompt. Configure the editor

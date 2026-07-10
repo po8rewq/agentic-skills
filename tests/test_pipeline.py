@@ -33,6 +33,29 @@ test_scenarios: []
 ## Suggested Test Scenarios
 """
 
+REQUIREMENTS_BLOCKED = """```yaml agentic
+status: blocked
+confidence: 0.4
+blocking_questions:
+  - "What exact rule defines an old job offer?"
+  - "Should legacy offers be hidden everywhere or only from default views?"
+assumptions: []
+acceptance_criteria: []
+non_goals: []
+test_scenarios: []
+```
+
+# Requirements
+## Summary
+## Assumptions
+## Functional Requirements
+## Non-Functional Requirements
+## Edge Cases
+## Acceptance Criteria
+## Open Questions
+## Suggested Test Scenarios
+"""
+
 ARCHITECTURE_READY = """```yaml agentic
 status: ready
 confidence: 0.8
@@ -336,6 +359,15 @@ class PipelineTests(unittest.TestCase):
                 "Here is the requirements artifact.\n\n```yaml agentic\nstatus: ready\nconfidence: 0.9\n```\n",
             )
 
+    def test_output_schema_accepts_agentic_metadata_with_extra_yaml_document_separator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "output-schema.yaml").write_text("required_metadata: [status, confidence]\n")
+            PipelineRunner._validate_output(
+                skill,
+                "```yaml agentic\nstatus: ready\nconfidence: 0.9\n---\nignored: true\n```\n",
+            )
+
     def test_output_schema_rejects_invalid_metadata_enum(self):
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory)
@@ -368,11 +400,20 @@ class PipelineTests(unittest.TestCase):
             runner = self.runner(Path(directory))
             runner.prepare()
             artifact = runner.run_dir / "requirements.md"
-            artifact.write_text(REQUIREMENTS_READY.replace("status: ready", "status: blocked"))
-            with self.assertRaisesRegex(RuntimeError, "requirements gate blocked"):
+            artifact.write_text(REQUIREMENTS_BLOCKED)
+            with self.assertRaisesRegex(RuntimeError, "What exact rule defines an old job offer"):
                 runner._enforce_stage_gate("requirements", artifact, {"id": "requirements", "output": "requirements.md"})
             state = json.loads((runner.run_dir / "state.json").read_text())
             self.assertEqual(state["status"], "stopped")
+            self.assertEqual(state["stages"]["requirements"]["blocked_reason"], "What exact rule defines an old job offer?")
+            self.assertEqual(
+                state["stages"]["requirements"]["blocking_questions"],
+                [
+                    "What exact rule defines an old job offer?",
+                    "Should legacy offers be hidden everywhere or only from default views?",
+                ],
+            )
+            self.assertFalse(state["stages"]["requirements"]["interactive_resolution_available"])
 
     def test_architecture_blocked_gate_stops_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -401,6 +442,68 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertTrue(requested)
             self.assertEqual(approvals, [("requirements", "requirements.md", "requirements.md")])
+
+    def test_requirements_blocked_gate_resolves_interactively_and_reruns(self):
+        class FakeProvider:
+            def __init__(self):
+                self.outputs = [REQUIREMENTS_BLOCKED, REQUIREMENTS_READY]
+
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=self.outputs.pop(0), command=["fake-requirements", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory))
+            runner.options.skip_approval = False
+            runner.prepare()
+            runner._approve = lambda stage, output_path, step: None
+            provider = FakeProvider()
+            with patch("agentic.pipeline.make_provider", return_value=provider):
+                with patch("agentic.pipeline.sys.stdin.isatty", return_value=True):
+                    with patch("agentic.pipeline.sys.stdout.isatty", return_value=True):
+                        with patch("builtins.input", side_effect=["Older than 30 days", "Hidden everywhere"]):
+                            runner._run_skill({"id": "requirements", "skill": "requirements", "output": "requirements.md", "approval": False})
+
+            answers = (runner.run_dir / "requirements-answers.md").read_text()
+            prompt_log = (runner.run_dir / "logs" / "requirements.prompt.md").read_text()
+            artifact = (runner.run_dir / "requirements.md").read_text()
+            self.assertIn("Older than 30 days", answers)
+            self.assertIn("Hidden everywhere", answers)
+            self.assertIn("# Input: blocker_answers", prompt_log)
+            self.assertIn("Older than 30 days", prompt_log)
+            self.assertIn("status: ready", artifact)
+            self.assertEqual(runner.state["stages"]["requirements"]["status"], "ready")
+            self.assertEqual(runner.state["stages"]["requirements"]["answers_artifact"], "requirements-answers.md")
+            self.assertNotIn("blocked_reason", runner.state["stages"]["requirements"])
+
+    def test_blocked_requirements_run_writes_evaluation_with_blocker_details(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=REQUIREMENTS_BLOCKED, command=["fake-requirements", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.runner(
+                root,
+                {"steps": [{"id": "requirements", "skill": "requirements", "output": "requirements.md", "approval": False}]},
+            )
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                with self.assertRaisesRegex(RuntimeError, "Should legacy offers be hidden everywhere"):
+                    runner.run()
+
+            evaluation = yaml.safe_load((runner.run_dir / "evaluation.yaml").read_text())
+            self.assertEqual(evaluation["status"], "stopped")
+            self.assertEqual(
+                evaluation["stages"]["requirements"]["blocking_questions"],
+                [
+                    "What exact rule defines an old job offer?",
+                    "Should legacy offers be hidden everywhere or only from default views?",
+                ],
+            )
+            self.assertEqual(
+                evaluation["stages"]["requirements"]["blocked_reason"],
+                "What exact rule defines an old job offer?",
+            )
+            self.assertFalse(evaluation["stages"]["requirements"]["interactive_resolution_available"])
 
     def test_high_risk_architecture_requires_approval_and_records_risk(self):
         with tempfile.TemporaryDirectory() as directory:

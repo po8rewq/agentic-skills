@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,6 +171,8 @@ class PipelineRunner:
                 value = self.git.diff() if self.git.is_repo() else "Not a git repository."
             elif item == "test_results":
                 value = self.test_results or self._artifact("test-results.md")
+            elif item == "blocker_answers":
+                value = self._artifact("requirements-answers.md")
             else:
                 value = self._artifact(item)
             sections += [f"# Input: {item}", value]
@@ -183,6 +186,31 @@ class PipelineRunner:
             sections += ["# Output requirement", "Return only the requested Markdown artifact."]
         return "\n\n".join(sections) + "\n"
 
+    def _run_skill_once(
+        self,
+        step: dict[str, Any],
+        skill_path: Path,
+        provider_name: str,
+        model: str,
+        *,
+        banner_suffix: str = "",
+    ) -> None:
+        stage = step["id"]
+        prompt = self._prompt(step, skill_path.read_text(encoding="utf-8"))
+        output_path = self.run_dir / step["output"]
+        prompt_path = self.logs_dir / f"{stage}.prompt.md"
+        output_log = self.logs_dir / f"{stage}.output.md"
+        print(f"[{stage}] {provider_name} / {model} -> {output_path}{banner_suffix}")
+        if self.options.dry_run:
+            return
+        prompt_path.write_text(prompt, encoding="utf-8")
+        result = make_provider(provider_name, self.config, self.repo).run(prompt, model, stage)
+        output = result.output.rstrip() + "\n"
+        output_path.write_text(output, encoding="utf-8")
+        self._validate_output(skill_path.parent, result.output)
+        output_log.write_text(output, encoding="utf-8")
+        (self.logs_dir / f"{stage}.command.txt").write_text(shlex.join(result.command) + "\n", encoding="utf-8")
+
     def _run_skill(self, step: dict[str, Any]) -> None:
         stage = step["id"]
         if stage == "review" and self.config["gates"].get("require_tests_before_review"):
@@ -191,25 +219,21 @@ class PipelineRunner:
         skill_path = Path(self.config["runtime"]["skills_dir"]) / step["skill"] / "SKILL.md"
         if not skill_path.exists():
             raise ValueError(f"Skill not found: {skill_path}")
-        prompt = self._prompt(step, skill_path.read_text(encoding="utf-8"))
         output_path = self.run_dir / step["output"]
-        prompt_path = self.logs_dir / f"{stage}.prompt.md"
-        output_log = self.logs_dir / f"{stage}.output.md"
         model = self._resolve_stage_model(stage)
         self._record_stage_routing(stage, model)
         provider_name = step.get("provider", self.config["providers"]["default"])
-        print(f"[{stage}] {provider_name} / {model} -> {output_path}")
-        if self.options.dry_run:
-            return
-        prompt_path.write_text(prompt, encoding="utf-8")
-        result = make_provider(provider_name, self.config, self.repo).run(prompt, model, stage)
-        output_path.write_text(result.output.rstrip() + "\n", encoding="utf-8")
-        self._validate_output(skill_path.parent, result.output)
-        gate_approval_requested = self._enforce_stage_gate(stage, output_path, step)
+        self._run_skill_once(step, skill_path, provider_name, model)
+        gate_approval_requested = self._enforce_stage_gate(
+            stage,
+            output_path,
+            step,
+            skill_path=skill_path,
+            provider_name=provider_name,
+            model=model,
+        )
         if stage == "architecture":
             self._record_stage_routing(stage, model)
-        output_log.write_text(result.output.rstrip() + "\n", encoding="utf-8")
-        (self.logs_dir / f"{stage}.command.txt").write_text(shlex.join(result.command) + "\n", encoding="utf-8")
         if not gate_approval_requested and (
             step.get("approval") or stage in self.config["gates"].get("require_approval_after", [])
         ):
@@ -280,10 +304,21 @@ class PipelineRunner:
         match = re.search(r"```ya?ml\s+agentic\s*\n(.*?)\n```", output, re.S | re.I)
         if not match:
             raise RuntimeError("Provider output is missing required ```yaml agentic``` metadata block")
+        raw = match.group(1)
         try:
-            value = yaml.safe_load(match.group(1)) or {}
+            value = yaml.safe_load(raw) or {}
         except yaml.YAMLError as exc:
-            raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
+            # Some providers incorrectly append a second YAML document separator after
+            # the metadata inside the same fenced block. Accept the first document and
+            # ignore later ones so the gate still reads the intended metadata.
+            parts = re.split(r"(?m)^---\s*$", raw, maxsplit=1)
+            if len(parts) == 2:
+                try:
+                    value = yaml.safe_load(parts[0]) or {}
+                except yaml.YAMLError:
+                    raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
+            else:
+                raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
         if not isinstance(value, dict):
             raise RuntimeError("Provider output agentic metadata must be a YAML mapping")
         return value
@@ -306,6 +341,119 @@ class PipelineRunner:
             value = value[part]
         return True
 
+    @staticmethod
+    def _blocking_questions(metadata: dict[str, Any]) -> list[str]:
+        questions = metadata.get("blocking_questions", [])
+        if not isinstance(questions, list):
+            return []
+        return [str(question).strip() for question in questions if str(question).strip()]
+
+    @classmethod
+    def _blocked_reason(cls, metadata: dict[str, Any]) -> str:
+        questions = cls._blocking_questions(metadata)
+        if questions:
+            return questions[0]
+        return "stage returned blocked without explicit blocking_questions"
+
+    @staticmethod
+    def _requirements_answers_artifact() -> str:
+        return "requirements-answers.md"
+
+    def _can_resolve_requirements_interactively(self, metadata: dict[str, Any]) -> bool:
+        return (
+            not self.options.skip_approval
+            and bool(self._blocking_questions(metadata))
+            and sys.stdin.isatty()
+            and sys.stdout.isatty()
+        )
+
+    def _record_blocked_stage(self, stage: str, metadata: dict[str, Any], *, interactive_resolution_available: bool) -> None:
+        stage_state: dict[str, Any] = self.state.setdefault("stages", {}).get(stage, {})
+        stage_state["blocking_questions"] = self._blocking_questions(metadata)
+        stage_state["blocked_reason"] = self._blocked_reason(metadata)
+        stage_state["interactive_resolution_available"] = interactive_resolution_available
+        answers_artifact = self.state.setdefault("artifacts", {}).get("requirements_answers")
+        if stage == "requirements" and answers_artifact:
+            stage_state["answers_artifact"] = answers_artifact
+        self.state.setdefault("stages", {})[stage] = stage_state
+
+    def _clear_blocked_stage(self, stage: str) -> None:
+        stage_state = self.state.setdefault("stages", {}).get(stage)
+        if not isinstance(stage_state, dict):
+            return
+        for key in ("blocking_questions", "blocked_reason", "interactive_resolution_available"):
+            stage_state.pop(key, None)
+        answers_artifact = self.state.setdefault("artifacts", {}).get("requirements_answers")
+        if stage == "requirements" and answers_artifact:
+            stage_state["answers_artifact"] = answers_artifact
+
+    def _blocked_gate_message(self, stage: str, output_path: Path, metadata: dict[str, Any]) -> str:
+        reason = self._blocked_reason(metadata)
+        questions = self._blocking_questions(metadata)
+        lines = [f"{stage} gate blocked implementation: {reason}", f"Artifact: {output_path}"]
+        if questions:
+            lines += ["Blocking questions:"] + [f"- {question}" for question in questions]
+        return "\n".join(lines)
+
+    def _collect_requirements_blocker_answers(self, questions: list[str]) -> list[dict[str, str]]:
+        answers: list[dict[str, str]] = []
+        print("Requirements are blocked pending answers to these questions:")
+        for index, question in enumerate(questions, start=1):
+            answer = input(f"[requirements blocker {index}/{len(questions)}] {question}\n> ").strip()
+            if not answer:
+                self.state["status"] = "stopped"
+                self._save_state()
+                raise RuntimeError("Pipeline stopped while collecting requirements blocker answers")
+            answers.append({"question": question, "answer": answer})
+        return answers
+
+    def _write_requirements_blocker_answers(self, answers: list[dict[str, str]]) -> None:
+        lines = ["# Requirements Blocker Answers", ""]
+        for index, item in enumerate(answers, start=1):
+            lines += [
+                f"## Question {index}",
+                "",
+                item["question"],
+                "",
+                "### Answer",
+                "",
+                item["answer"],
+                "",
+            ]
+        artifact_name = self._requirements_answers_artifact()
+        (self.run_dir / artifact_name).write_text("\n".join(lines), encoding="utf-8")
+        self.state.setdefault("artifacts", {})["requirements_answers"] = artifact_name
+        stage_state: dict[str, Any] = self.state.setdefault("stages", {}).get("requirements", {})
+        stage_state["answers_artifact"] = artifact_name
+        self.state.setdefault("stages", {})["requirements"] = stage_state
+        self._save_state()
+
+    def _resolve_requirements_blocker(
+        self,
+        step: dict[str, Any],
+        skill_path: Path,
+        provider_name: str,
+        model: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        questions = self._blocking_questions(metadata)
+        if not questions or not self._can_resolve_requirements_interactively(metadata):
+            return False
+        answers = self._collect_requirements_blocker_answers(questions)
+        self._write_requirements_blocker_answers(answers)
+        rerun_inputs = list(step.get("inputs", []))
+        if "blocker_answers" not in rerun_inputs:
+            rerun_inputs.append("blocker_answers")
+        rerun_step = {**step, "inputs": rerun_inputs}
+        self._run_skill_once(
+            rerun_step,
+            skill_path,
+            provider_name,
+            model,
+            banner_suffix=" (rerun after blocker answers)",
+        )
+        return True
+
     def _load_stage_metadata(self, artifact_name: str) -> dict[str, Any]:
         return self._extract_agentic_yaml(self._artifact(artifact_name))
 
@@ -320,27 +468,54 @@ class PipelineRunner:
             self.state["risk"] = metadata["risk"]
         self.state.setdefault("stages", {})[stage] = stage_state
 
-    def _enforce_stage_gate(self, stage: str, output_path: Path, step: dict[str, Any]) -> bool:
+    def _enforce_stage_gate(
+        self,
+        stage: str,
+        output_path: Path,
+        step: dict[str, Any],
+        *,
+        skill_path: Path | None = None,
+        provider_name: str | None = None,
+        model: str | None = None,
+    ) -> bool:
         if stage not in {"requirements", "architecture"}:
             return False
-        metadata = self._load_stage_metadata(step["output"])
-        self._record_stage_metadata(stage, metadata)
-        status = str(metadata.get("status", "")).casefold()
-        if status not in {"ready", "risky", "blocked"}:
-            raise RuntimeError(f"{stage} gate metadata has invalid status: {metadata.get('status')!r}")
-        if status == "blocked":
-            self.state["status"] = "stopped"
-            self._save_state()
-            raise RuntimeError(f"{stage} gate blocked implementation; see {output_path}")
-        risk_level = str(self._metadata_get(metadata, "risk.level") or "").casefold()
-        if risk_level and risk_level not in RISK_LEVELS:
-            raise RuntimeError(f"{stage} gate metadata has invalid risk level: {risk_level!r}")
-        approval_levels = self.config["risk_routing"].get("require_human_approval", [])
-        approval_required = status == "risky" or risk_level in approval_levels
-        if approval_required:
-            self._approve(stage, output_path, step)
-            return True
-        return False
+        while True:
+            metadata = self._load_stage_metadata(step["output"])
+            self._record_stage_metadata(stage, metadata)
+            status = str(metadata.get("status", "")).casefold()
+            if status not in {"ready", "risky", "blocked"}:
+                raise RuntimeError(f"{stage} gate metadata has invalid status: {metadata.get('status')!r}")
+            if status == "blocked":
+                interactive_resolution_available = stage == "requirements" and self._can_resolve_requirements_interactively(metadata)
+                self._record_blocked_stage(
+                    stage,
+                    metadata,
+                    interactive_resolution_available=interactive_resolution_available,
+                )
+                self._save_state()
+                if (
+                    stage == "requirements"
+                    and interactive_resolution_available
+                    and skill_path is not None
+                    and provider_name is not None
+                    and model is not None
+                    and self._resolve_requirements_blocker(step, skill_path, provider_name, model, metadata)
+                ):
+                    continue
+                self.state["status"] = "stopped"
+                self._save_state()
+                raise RuntimeError(self._blocked_gate_message(stage, output_path, metadata))
+            self._clear_blocked_stage(stage)
+            risk_level = str(self._metadata_get(metadata, "risk.level") or "").casefold()
+            if risk_level and risk_level not in RISK_LEVELS:
+                raise RuntimeError(f"{stage} gate metadata has invalid risk level: {risk_level!r}")
+            approval_levels = self.config["risk_routing"].get("require_human_approval", [])
+            approval_required = status == "risky" or risk_level in approval_levels
+            if approval_required:
+                self._approve(stage, output_path, step)
+                return True
+            return False
 
     def _current_risk_level(self) -> str:
         state_level = self._metadata_get(self.state, "risk.level")
