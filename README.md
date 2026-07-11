@@ -150,8 +150,14 @@ skill's `output-schema.yaml`.
 Gate behavior:
 
 - `status: blocked` stops the pipeline before implementation.
-- `status: risky` requires human approval.
-- architecture `risk.level: high` or `risk.level: critical` requires human approval.
+- `status: risky` requires human approval before implementation.
+- architecture `risk.level: high` or `risk.level: critical` requires human approval before implementation.
+
+The built-in pipelines now insert an adversarial review step after `requirements`
+and after `architecture`, before the human approval point. Each review writes a
+structured artifact, automatically reruns the authored stage once when it returns
+`changes_requested` or `blocked`, and then reruns the review against the refined
+artifact. If the second review still returns `blocked`, the pipeline stops.
 
 When `requirements` returns `status: blocked`, the runner now records the
 explicit blocker reason and blocking questions in `state.json` and
@@ -216,6 +222,31 @@ required. The generic review stage receives the selected review passes in its pr
 later specialized review stages can consume the same routing data.
 
 ### Specialized review
+
+Built-in pipelines now include two planning-artifact review steps before
+implementation:
+
+```yaml
+- id: review-requirements
+  type: artifact_review
+  skill: review-requirements
+  inputs: [requirements.md]
+  output: requirements-review.md
+  target_stage: requirements
+  approval: true
+
+- id: review-architecture
+  type: artifact_review
+  skill: review-architecture-plan
+  inputs: [requirements.md, design.md]
+  output: design-review.md
+  target_stage: architecture
+  approval: true
+```
+
+These stages critique the artifact itself rather than implementation code. They
+record structured findings, trigger one automatic regeneration pass of the target
+artifact, and become the default human review point for requirements and design.
 
 The default pipelines use a `review_group` step that runs focused review passes
 selected from `risk_routing.review_passes`:

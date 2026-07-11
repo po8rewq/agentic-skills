@@ -103,6 +103,27 @@ None.
 Approved
 """
 
+REVIEW_CHANGES_REQUESTED = """```yaml agentic
+summary: "Clarify acceptance criteria."
+status: changes_requested
+findings:
+  - severity: important
+    category: requirements
+    file: requirements.md
+    line: 1
+    issue: "Acceptance criteria do not define the failure case."
+    recommendation: "Add a testable failure-path acceptance criterion."
+```
+
+# Review Requirements
+## Summary
+Clarify acceptance criteria.
+## Findings
+- Add a failure-path acceptance criterion.
+## Verdict
+Changes requested
+"""
+
 REVIEW_BLOCKED = """```yaml agentic
 summary: "Security issue found."
 status: blocked
@@ -245,6 +266,90 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(runner.state["stages"]["review"]["status"], "blocked")
             self.assertEqual(runner.state["stages"]["review"]["blocking_findings"], 1)
             self.assertIn("security", runner.state["review"]["passes"])
+
+    def test_artifact_review_reruns_target_stage_once_before_approval(self):
+        class FakeProvider:
+            def __init__(self):
+                self.requirements_runs = 0
+                self.review_runs = 0
+
+            def run(self, prompt, model, stage):
+                if stage == "requirements":
+                    self.requirements_runs += 1
+                    return ProviderResult(output=REQUIREMENTS_READY, command=["fake", stage], returncode=0)
+                if stage == "review-requirements":
+                    self.review_runs += 1
+                    output = REVIEW_CHANGES_REQUESTED if self.review_runs == 1 else REVIEW_APPROVED
+                    return ProviderResult(output=output, command=["fake", stage], returncode=0)
+                raise AssertionError(stage)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pipeline = {
+                "steps": [
+                    {"id": "requirements", "skill": "requirements", "output": "requirements.md"},
+                    {
+                        "id": "review-requirements",
+                        "type": "artifact_review",
+                        "skill": "review-requirements",
+                        "inputs": ["requirements.md"],
+                        "output": "requirements-review.md",
+                        "target_stage": "requirements",
+                        "context_stage": "review",
+                        "model_stage": "review",
+                    },
+                ]
+            }
+            runner = self.runner(root, pipeline)
+            provider = FakeProvider()
+
+            with patch("agentic.pipeline.make_provider", return_value=provider):
+                runner.run()
+
+            state = json.loads((runner.run_dir / "state.json").read_text())
+            review = state["reviews"]["review-requirements"]
+            self.assertEqual(provider.requirements_runs, 2)
+            self.assertEqual(provider.review_runs, 2)
+            self.assertTrue(review["refined"])
+            self.assertEqual(review["status"], "approved")
+            self.assertEqual(review["target_stage"], "requirements")
+
+    def test_artifact_review_blocked_after_refinement_stops_pipeline(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                if stage == "requirements":
+                    return ProviderResult(output=REQUIREMENTS_READY, command=["fake", stage], returncode=0)
+                if stage == "review-requirements":
+                    return ProviderResult(output=REVIEW_BLOCKED, command=["fake", stage], returncode=0)
+                raise AssertionError(stage)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pipeline = {
+                "steps": [
+                    {"id": "requirements", "skill": "requirements", "output": "requirements.md"},
+                    {
+                        "id": "review-requirements",
+                        "type": "artifact_review",
+                        "skill": "review-requirements",
+                        "inputs": ["requirements.md"],
+                        "output": "requirements-review.md",
+                        "target_stage": "requirements",
+                        "context_stage": "review",
+                        "model_stage": "review",
+                    },
+                ]
+            }
+            runner = self.runner(root, pipeline)
+
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                with self.assertRaisesRegex(RuntimeError, "review-requirements blocked the pipeline"):
+                    runner.run()
+
+            state = json.loads((runner.run_dir / "state.json").read_text())
+            self.assertEqual(state["status"], "stopped")
+            self.assertEqual(state["completed"], ["requirements"])
+            self.assertEqual(state["stages"]["review-requirements"]["status"], "blocked")
 
     def test_structured_review_findings_drive_blocking_condition(self):
         with tempfile.TemporaryDirectory() as directory:

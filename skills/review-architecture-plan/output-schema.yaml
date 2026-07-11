@@ -1,0 +1,4 @@
+required_metadata: [summary, status, findings]
+metadata_enums:
+  status: [approved, changes_requested, blocked]
+required_sections: [Summary, Findings, Verdict]

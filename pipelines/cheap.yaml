@@ -2,6 +2,15 @@ steps:
   - id: requirements
     skill: requirements
     output: requirements.md
+  - id: review-requirements
+    type: artifact_review
+    skill: review-requirements
+    inputs: [requirements.md]
+    output: requirements-review.md
+    target_stage: requirements
+    approval: true
+    context_stage: review
+    model_stage: review
   - id: implementation
     skill: implementation
     inputs: [requirements.md, repo_context]

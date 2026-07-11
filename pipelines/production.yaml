@@ -2,12 +2,28 @@ steps:
   - id: requirements
     skill: requirements
     output: requirements.md
+  - id: review-requirements
+    type: artifact_review
+    skill: review-requirements
+    inputs: [requirements.md]
+    output: requirements-review.md
+    target_stage: requirements
     approval: true
+    context_stage: review
+    model_stage: review
   - id: architecture
     skill: architecture
     inputs: [requirements.md, repo_context]
     output: design.md
+  - id: review-architecture
+    type: artifact_review
+    skill: review-architecture-plan
+    inputs: [requirements.md, design.md]
+    output: design-review.md
+    target_stage: architecture
     approval: true
+    context_stage: review
+    model_stage: review
   - id: implementation
     skill: implementation
     inputs: [requirements.md, design.md, repo_context]

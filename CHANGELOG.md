@@ -12,6 +12,7 @@
 - Added cost-free `evaluation.yaml` run summaries.
 - Added stage-specific read-only repo memory loading for pipeline prompts.
 - Added specialized review skill contracts for correctness, tests, architecture, security, migrations, and performance.
+- Added pre-human `artifact_review` stages for requirements and architecture with a single automatic refine-and-rerun loop.
 - Added `review_group` orchestration for risk-selected specialized review passes.
 - Added structured review finding blocking behavior with security approval after fixes.
 - Generated richer PR bodies with artifact links, risk, checks, review artifacts, evaluation, and human notes.

@@ -150,13 +150,22 @@ class PipelineRunner:
                 sections.append(f"## {label}\n\n{path.read_text(encoding='utf-8')}")
         return "\n\n".join(sections) or "No configured repo memory file was found for this stage."
 
+    @staticmethod
+    def _stage_context_name(step: dict[str, Any]) -> str:
+        return str(step.get("context_stage") or step["id"])
+
+    @staticmethod
+    def _stage_model_name(step: dict[str, Any]) -> str:
+        return str(step.get("model_stage") or step["id"])
+
     def _prompt(self, step: dict[str, Any], skill_text: str) -> str:
+        context_stage = self._stage_context_name(step)
         sections = [
             "# Pipeline task", self.options.task,
             "# Skill instructions", skill_text,
             "# Repository instructions", self._repository_instructions(),
-            "# Repository context", self._repo_context(step["id"]),
-            "# Repository memory", self._repo_memory(step["id"]),
+            "# Repository context", self._repo_context(context_stage),
+            "# Repository memory", self._repo_memory(context_stage),
         ]
         if step["id"] == "review":
             review_passes = self._selected_review_passes()
@@ -220,10 +229,12 @@ class PipelineRunner:
         if not skill_path.exists():
             raise ValueError(f"Skill not found: {skill_path}")
         output_path = self.run_dir / step["output"]
-        model = self._resolve_stage_model(stage)
+        model = self._resolve_stage_model(self._stage_model_name(step))
         self._record_stage_routing(stage, model)
         provider_name = step.get("provider", self.config["providers"]["default"])
         self._run_skill_once(step, skill_path, provider_name, model)
+        if self.options.dry_run:
+            return
         gate_approval_requested = self._enforce_stage_gate(
             stage,
             output_path,
@@ -647,7 +658,7 @@ class PipelineRunner:
             if not self.test_results and not (self.run_dir / "test-results.md").exists():
                 raise RuntimeError("Review requires check results, but test-results.md does not exist")
         passes = step.get("passes") or self._selected_review_passes()
-        model = self._resolve_stage_model(stage)
+        model = self._resolve_stage_model(self._stage_model_name(step))
         self._record_stage_routing(stage, model)
         provider_name = step.get("provider", self.config["providers"]["default"])
         pass_results: dict[str, dict[str, Any]] = {}
@@ -681,6 +692,110 @@ class PipelineRunner:
             self._record_review_results(stage, pass_results, step["output"])
             if step.get("approval") or stage in self.config["gates"].get("require_approval_after", []):
                 self._approve(stage, self.run_dir / step["output"], step)
+
+    def _pipeline_step(self, stage: str) -> dict[str, Any]:
+        for step in self.pipeline.get("steps", []):
+            if step.get("id") == stage:
+                return step
+        raise ValueError(f"Stage not found in pipeline: {stage}")
+
+    @staticmethod
+    def _single_review_state(metadata: dict[str, Any]) -> dict[str, Any]:
+        findings = [finding for finding in metadata.get("findings", []) if isinstance(finding, dict)]
+        blocking = [finding for finding in findings if finding.get("severity") == "blocking"]
+        important = [finding for finding in findings if finding.get("severity") == "important"]
+        optional = [finding for finding in findings if finding.get("severity") == "optional"]
+        return {
+            "status": metadata.get("status", "unknown"),
+            "blocking_findings": len(blocking),
+            "important_findings": len(important),
+            "optional_findings": len(optional),
+        }
+
+    def _record_artifact_review_result(
+        self,
+        stage: str,
+        metadata: dict[str, Any],
+        output_name: str,
+        *,
+        target_stage: str,
+        refined: bool,
+    ) -> None:
+        review_state = self._single_review_state(metadata)
+        review_state["target_stage"] = target_stage
+        review_state["refined"] = refined
+        self.state.setdefault("reviews", {})[stage] = {
+            "artifact": output_name,
+            "target_stage": target_stage,
+            "metadata": metadata,
+            **review_state,
+        }
+        self.state.setdefault("stages", {})[stage] = review_state
+
+    def _artifact_review_blocked_message(self, stage: str, output_path: Path, metadata: dict[str, Any]) -> str:
+        summary = metadata.get("summary") or "artifact review returned blocked"
+        return f"{stage} blocked the pipeline: {summary}\nArtifact: {output_path}"
+
+    def _run_artifact_review(self, step: dict[str, Any]) -> None:
+        stage = step["id"]
+        skill_path = Path(self.config["runtime"]["skills_dir"]) / step["skill"] / "SKILL.md"
+        if not skill_path.exists():
+            raise ValueError(f"Skill not found: {skill_path}")
+        output_path = self.run_dir / step["output"]
+        model = self._resolve_stage_model(self._stage_model_name(step))
+        self._record_stage_routing(stage, model)
+        provider_name = step.get("provider", self.config["providers"]["default"])
+        self._run_skill_once(step, skill_path, provider_name, model)
+        if self.options.dry_run:
+            return
+        metadata = self._load_stage_metadata(step["output"])
+        status = str(metadata.get("status", "")).casefold()
+        if status not in {"approved", "changes_requested", "blocked"}:
+            raise RuntimeError(f"{stage} review metadata has invalid status: {metadata.get('status')!r}")
+        refined = False
+        if status in {"changes_requested", "blocked"}:
+            target_stage = str(step["target_stage"])
+            target_step = self._pipeline_step(target_stage)
+            target_skill_path = Path(self.config["runtime"]["skills_dir"]) / target_step["skill"] / "SKILL.md"
+            if not target_skill_path.exists():
+                raise ValueError(f"Skill not found: {target_skill_path}")
+            target_model = self._resolve_stage_model(self._stage_model_name(target_step))
+            target_provider = target_step.get("provider", self.config["providers"]["default"])
+            rerun_inputs = list(target_step.get("inputs", []))
+            if step["output"] not in rerun_inputs:
+                rerun_inputs.append(step["output"])
+            rerun_step = {**target_step, "inputs": rerun_inputs}
+            self._run_skill_once(
+                rerun_step,
+                target_skill_path,
+                target_provider,
+                target_model,
+                banner_suffix=f" (rerun after {stage})",
+            )
+            if target_stage in {"requirements", "architecture"}:
+                self._enforce_stage_gate(
+                    target_stage,
+                    self.run_dir / target_step["output"],
+                    {**target_step, "approval": False},
+                    skill_path=target_skill_path,
+                    provider_name=target_provider,
+                    model=target_model,
+                )
+                if target_stage == "architecture":
+                    self._record_stage_routing(target_stage, target_model)
+            self._run_skill_once(step, skill_path, provider_name, model, banner_suffix=" (rerun after refinement)")
+            metadata = self._load_stage_metadata(step["output"])
+            status = str(metadata.get("status", "")).casefold()
+            if status not in {"approved", "changes_requested", "blocked"}:
+                raise RuntimeError(f"{stage} review metadata has invalid status: {metadata.get('status')!r}")
+            refined = True
+        self._record_artifact_review_result(stage, metadata, step["output"], target_stage=str(step["target_stage"]), refined=refined)
+        if status == "blocked":
+            self.state["status"] = "stopped"
+            self._save_state()
+            raise RuntimeError(self._artifact_review_blocked_message(stage, output_path, metadata))
+        if step.get("approval") or stage in self.config["gates"].get("require_approval_after", []):
+            self._approve(stage, output_path, step)
 
     def _review_group_state(self, pass_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
         findings = [
@@ -838,7 +953,10 @@ class PipelineRunner:
                 aggregate = data.get("artifact")
                 if isinstance(aggregate, str) and (self.run_dir / aggregate).exists():
                     refs.append((stage, self._artifact_ref(aggregate)))
-                for review_pass in data.get("passes", {}).keys():
+                passes = data.get("passes", {})
+                if not isinstance(passes, dict):
+                    continue
+                for review_pass in passes.keys():
                     artifact = self._review_artifact_for_pass(review_pass, aggregate or "review.md")
                     if (self.run_dir / artifact).exists():
                         refs.append((f"{stage}:{review_pass}", self._artifact_ref(artifact)))
@@ -979,6 +1097,8 @@ class PipelineRunner:
                     continue
                 if step.get("type", "skill") == "skill":
                     self._run_skill(step)
+                elif step["type"] == "artifact_review":
+                    self._run_artifact_review(step)
                 elif step["type"] == "review_group":
                     self._run_review_group(step)
                 elif step["type"] == "command_group":

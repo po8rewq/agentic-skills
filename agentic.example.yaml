@@ -76,7 +76,7 @@ forge:
   labels: [ai-generated]
   reviewers: []
 gates:
-  require_approval_after: [requirements, architecture]
+  require_approval_after: []
   require_tests_before_review: true
   block_on_review_findings: [blocking, security]
 risk_routing:

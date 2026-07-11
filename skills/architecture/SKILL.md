@@ -9,6 +9,7 @@ Design the smallest robust solution satisfying the approved requirements and rep
 - Do not edit the repository.
 - Identify affected components, interfaces, data flow, failure modes, security implications, and tradeoffs.
 - Prefer existing project conventions and explicitly document migrations or compatibility concerns.
+- If an architecture review artifact is provided as additional input, revise the design to address valid findings instead of echoing them back unchanged.
 
 ## Output
 
@@ -53,6 +54,10 @@ Block implementation when affected modules are unclear, data or API contracts ar
 unclear, migration or rollback strategy is unclear, security/auth behavior is
 uncertain, the implementation plan is too large or unbounded, or repository
 context is insufficient.
+
+When review findings are provided, fold the resolved design changes into the new
+artifact. Keep an issue unresolved only when the review conflicts with repository
+constraints or still depends on missing information.
 
 After the metadata block, write Markdown sections: Context, Proposed Design,
 Components and Interfaces, Data Flow, Error Handling, Security and Privacy,

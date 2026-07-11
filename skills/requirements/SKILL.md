@@ -10,6 +10,7 @@ Convert the task into clear, testable software requirements.
 - Make assumptions explicit and ask only truly blocking questions.
 - Preserve the user's intent; distinguish goals from non-goals.
 - If blocker answers are provided as additional input, resolve them into the regenerated artifact instead of repeating the same questions.
+- If a requirements review artifact is provided as additional input, revise the requirements to address valid findings instead of merely repeating them.
 
 ## Output
 
@@ -65,6 +66,10 @@ cases are unknown, scope is too broad, or required inputs are missing.
 When blocker answers are provided, update the metadata and Markdown artifact to
 reflect those answers. Keep questions in `blocking_questions` and `Open Questions`
 only when they remain genuinely unresolved after considering the provided answers.
+
+When review findings are provided, incorporate the resolved clarifications into
+the regenerated artifact. Keep a concern unresolved only when the review input
+conflicts with repository evidence or still lacks required information.
 
 After the metadata block, write Markdown sections: Summary, Assumptions,
 Functional Requirements, Non-Functional Requirements, Edge Cases, Acceptance
