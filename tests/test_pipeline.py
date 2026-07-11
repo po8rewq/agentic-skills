@@ -368,6 +368,33 @@ class PipelineTests(unittest.TestCase):
                 "```yaml agentic\nstatus: ready\nconfidence: 0.9\n---\nignored: true\n```\n",
             )
 
+    def test_output_schema_rejects_partially_quoted_yaml_list_item(self):
+        with tempfile.TemporaryDirectory() as directory:
+            skill = Path(directory)
+            (skill / "output-schema.yaml").write_text("required_metadata: [assumptions]\n")
+            PipelineRunner._validate_output(
+                skill,
+                (
+                    "```yaml agentic\n"
+                    "assumptions:\n"
+                    '  - "Add new job offers" means creating a new job record.\n'
+                    "```\n"
+                ),
+            )
+
+    def test_partial_quoted_yaml_list_item_is_repaired_preserving_content(self):
+        output = (
+            "```yaml agentic\n"
+            "assumptions:\n"
+            '  - "Add new job offers" means creating a new job record.\n'
+            "```\n"
+        )
+        metadata = PipelineRunner._extract_agentic_yaml(output)
+        self.assertEqual(
+            metadata["assumptions"],
+            ['"Add new job offers" means creating a new job record.'],
+        )
+
     def test_output_schema_rejects_invalid_metadata_enum(self):
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory)

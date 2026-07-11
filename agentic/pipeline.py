@@ -300,6 +300,40 @@ class PipelineRunner:
             raise RuntimeError(f"Provider output is missing required sections: {', '.join(missing)}")
 
     @staticmethod
+    def _format_yaml_error(raw: str, exc: yaml.YAMLError) -> str:
+        snippet = ""
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            line_number = mark.line + 1
+            lines = raw.splitlines()
+            start = max(0, line_number - 3)
+            end = min(len(lines), line_number + 2)
+            excerpt = [f"{index + 1}: {lines[index]}" for index in range(start, end)]
+            if excerpt:
+                snippet = f" Offending metadata lines:\n" + "\n".join(excerpt)
+        return f"Provider output contains invalid agentic metadata YAML: {exc}{snippet}"
+
+    @staticmethod
+    def _repair_partial_quoted_list_items(raw: str) -> str:
+        repaired_lines: list[str] = []
+        changed = False
+        pattern = re.compile(r'^(\s*-\s*)"([^"\n]+)"(\s+\S.*)$')
+        for line in raw.splitlines():
+            match = pattern.match(line)
+            if not match:
+                repaired_lines.append(line)
+                continue
+            prefix, quoted, suffix = match.groups()
+            text = f'"{quoted}"{suffix}'
+            text = text.replace("'", "''")
+            repaired_lines.append(f"{prefix}'{text}'")
+            changed = True
+        if not changed:
+            return raw
+        trailing_newline = "\n" if raw.endswith("\n") else ""
+        return "\n".join(repaired_lines) + trailing_newline
+
+    @staticmethod
     def _extract_agentic_yaml(output: str) -> dict[str, Any]:
         match = re.search(r"```ya?ml\s+agentic\s*\n(.*?)\n```", output, re.S | re.I)
         if not match:
@@ -308,6 +342,18 @@ class PipelineRunner:
         try:
             value = yaml.safe_load(raw) or {}
         except yaml.YAMLError as exc:
+            repaired = PipelineRunner._repair_partial_quoted_list_items(raw)
+            if repaired != raw:
+                try:
+                    value = yaml.safe_load(repaired) or {}
+                except yaml.YAMLError:
+                    pass
+                else:
+                    raw = repaired
+                    value = value or {}
+                    if not isinstance(value, dict):
+                        raise RuntimeError("Provider output agentic metadata must be a YAML mapping")
+                    return value
             # Some providers incorrectly append a second YAML document separator after
             # the metadata inside the same fenced block. Accept the first document and
             # ignore later ones so the gate still reads the intended metadata.
@@ -316,9 +362,9 @@ class PipelineRunner:
                 try:
                     value = yaml.safe_load(parts[0]) or {}
                 except yaml.YAMLError:
-                    raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
+                    raise RuntimeError(PipelineRunner._format_yaml_error(raw, exc)) from exc
             else:
-                raise RuntimeError(f"Provider output contains invalid agentic metadata YAML: {exc}") from exc
+                raise RuntimeError(PipelineRunner._format_yaml_error(raw, exc)) from exc
         if not isinstance(value, dict):
             raise RuntimeError("Provider output agentic metadata must be a YAML mapping")
         return value

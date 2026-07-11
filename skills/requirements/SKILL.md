@@ -29,6 +29,29 @@ non_goals: []
 test_scenarios: []
 ```
 
+Inside the `yaml agentic` block:
+
+- Every field must be valid YAML.
+- Every array item must be a single YAML string on one line.
+- Do not partially quote list items. Either quote the whole item or do not quote it at all.
+
+Valid example:
+
+```yaml agentic
+status: ready
+confidence: 0.8
+blocking_questions: []
+assumptions:
+  - The MCP server will operate against the existing jobs database used by this repository.
+  - '"Add new job offers" means creating a new job record, not importing or scraping from external sources.'
+acceptance_criteria:
+  - The MCP server exposes a tool to create a job offer with validated required fields.
+non_goals:
+  - Building a user-facing UI.
+test_scenarios:
+  - Create a valid job offer and verify it is persisted and retrievable by its identifier.
+```
+
 Set `status` to:
 
 - `ready` when the work is clear enough to implement and acceptance criteria are testable.
