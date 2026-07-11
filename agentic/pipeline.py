@@ -950,6 +950,9 @@ class PipelineRunner:
                 if not self.options.dry_run:
                     self.state.setdefault("completed", []).append(stage)
                     self._save_state()
+                pending_failure = self._pending_failure_message()
+                if pending_failure and self.state.get("pending_failure", {}).get("stage") != stage:
+                    raise RuntimeError(pending_failure)
             pending_failure = self._pending_failure_message()
             if pending_failure:
                 raise RuntimeError(pending_failure)

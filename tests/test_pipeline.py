@@ -756,6 +756,39 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(evaluation["status"], "failed")
             self.assertEqual(evaluation["checks"]["test"]["status"], "failed")
 
+    def test_final_checks_failure_blocks_pull_request_creation(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=REVIEW_APPROVED, command=["fake-review", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pipeline = {
+                "steps": [
+                    {"id": "final-checks", "type": "command_group", "commands": ["test"]},
+                    {
+                        "id": "review-final-checks",
+                        "type": "review_group",
+                        "condition": "final_checks_failed_for_review",
+                        "inputs": ["git_diff", "test_results"],
+                        "passes": ["correctness"],
+                        "output": "review-final-checks.md",
+                    },
+                    {"id": "pull-request", "type": "forge_pr", "condition": "forge_create_pr_enabled"},
+                ]
+            }
+            runner = self.runner(root, pipeline)
+            runner.config["commands"]["test"] = "python3 -c 'import sys; sys.exit(2)'"
+            runner.config["gates"]["rerun_review_on_final_checks_failure"] = True
+            runner.config["forge"]["create_pr"] = True
+
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                with patch.object(runner, "_create_pr") as create_pr:
+                    with self.assertRaisesRegex(RuntimeError, "Command group 'final-checks' failed"):
+                        runner.run()
+
+            create_pr.assert_not_called()
+
     def test_early_checks_failure_does_not_trigger_diagnostic_review(self):
         class FakeProvider:
             def run(self, prompt, model, stage):
