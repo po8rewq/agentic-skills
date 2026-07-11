@@ -245,6 +245,10 @@ review-fix flow can consume one review artifact.
 Blocking structured findings trigger `fix-review`. Optional findings do not block
 by default. If the original review contained a blocking security finding, the
 runner requires approval after `fix-review` completes.
+If `final-checks` fails, the built-in pipelines run one diagnostic review pass
+using the latest failed `test-results.md`, writing separate artifacts such as
+`review-final-checks.md` and `review-final-checks-correctness.md` before the run
+ends in a failed state.
 
 ### Repo context
 

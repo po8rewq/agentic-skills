@@ -557,9 +557,43 @@ class PipelineRunner:
         return mapping[review_pass]
 
     @staticmethod
-    def _review_artifact_for_pass(review_pass: str) -> str:
+    def _review_artifact_for_pass(review_pass: str, aggregate_name: str = "review.md") -> str:
         artifact_name = "migrations" if review_pass == "migration_or_rollback" else review_pass
-        return f"review-{artifact_name}.md"
+        prefix = Path(aggregate_name).stem
+        return f"{prefix}-{artifact_name}.md"
+
+    def _record_review_results(self, stage: str, pass_results: dict[str, dict[str, Any]], output_name: str) -> None:
+        reviews = self.state.setdefault("reviews", {})
+        review_state = self._review_group_state(pass_results)
+        reviews[stage] = {
+            "artifact": output_name,
+            "passes": pass_results,
+            **review_state,
+        }
+        if stage == "review":
+            self.state["review"] = {"artifact": output_name, "passes": pass_results}
+        self.state.setdefault("stages", {})[stage] = review_state
+
+    def _record_command_group_results(self, stage: str, checks: dict[str, dict[str, Any]], failed: bool) -> None:
+        state = self.state.setdefault("command_groups", {})
+        stage_checks = {name: data for name, data in checks.items() if data.get("stage") == stage}
+        state[stage] = {
+            "artifact": "test-results.md",
+            "status": "failed" if failed else "passed",
+            "failed": failed,
+            "checks": list(stage_checks.keys()),
+        }
+        self.state["last_command_group"] = {"stage": stage, "failed": failed}
+
+    def _defer_command_group_failure(self, stage: str) -> bool:
+        return stage == "final-checks" and bool(self.config["gates"].get("rerun_review_on_final_checks_failure"))
+
+    def _pending_failure_message(self) -> str | None:
+        pending = self.state.get("pending_failure")
+        if not isinstance(pending, dict):
+            return None
+        message = pending.get("message")
+        return str(message) if message else None
 
     def _run_review_group(self, step: dict[str, Any]) -> None:
         stage = step["id"]
@@ -577,7 +611,7 @@ class PipelineRunner:
             skill_path = Path(self.config["runtime"]["skills_dir"]) / skill / "SKILL.md"
             if not skill_path.exists():
                 raise ValueError(f"Review skill not found: {skill_path}")
-            output_name = self._review_artifact_for_pass(review_pass)
+            output_name = self._review_artifact_for_pass(review_pass, step["output"])
             output_path = self.run_dir / output_name
             review_step = {**step, "id": stage, "skill": skill, "output": output_name}
             prompt = self._prompt(review_step, skill_path.read_text(encoding="utf-8"))
@@ -598,9 +632,7 @@ class PipelineRunner:
             )
         if not self.options.dry_run:
             self._write_review_aggregate(step["output"], outputs)
-            self.state["review"] = {"passes": pass_results}
-            review_state = self._review_group_state(pass_results)
-            self.state.setdefault("stages", {})[stage] = review_state
+            self._record_review_results(stage, pass_results, step["output"])
             if step.get("approval") or stage in self.config["gates"].get("require_approval_after", []):
                 self._approve(stage, self.run_dir / step["output"], step)
 
@@ -637,7 +669,7 @@ class PipelineRunner:
             "",
         ]
         for review_pass, _, metadata in outputs:
-            artifact = self._review_artifact_for_pass(review_pass)
+            artifact = self._review_artifact_for_pass(review_pass, output_name)
             lines += [f"- {review_pass}: {metadata.get('status', 'unknown')} (`{artifact}`)"]
         lines += ["", "## Findings", ""]
         findings = [
@@ -665,7 +697,7 @@ class PipelineRunner:
         lines += ["## Verdict", "", "Blocked" if review_state["status"] == "blocked" else "Approved", ""]
         (self.run_dir / output_name).write_text("\n".join(lines), encoding="utf-8")
 
-    def _run_commands(self, step: dict[str, Any]) -> None:
+    def _run_commands(self, step: dict[str, Any]) -> str | None:
         lines = [f"# {step['id']} Results", ""]
         failed = False
         checks = self.state.setdefault("checks", {})
@@ -693,8 +725,11 @@ class PipelineRunner:
         self.test_results = "\n".join(lines)
         if not self.options.dry_run:
             (self.run_dir / "test-results.md").write_text(self.test_results, encoding="utf-8")
+            self._record_command_group_results(step["id"], checks, failed)
         if failed:
-            raise RuntimeError(f"Command group '{step['id']}' failed; see {self.run_dir / 'test-results.md'}")
+            return f"Command group '{step['id']}' failed; see {self.run_dir / 'test-results.md'}"
+        self.state.pop("pending_failure", None)
+        return None
 
     def _condition(self, condition: str | None) -> bool:
         if not condition:
@@ -712,6 +747,14 @@ class PipelineRunner:
             return verdict_blocked or has_finding
         if condition == "forge_create_pr_enabled":
             return bool(self.config["forge"].get("create_pr"))
+        if condition == "final_checks_failed_for_review":
+            last = self.state.get("last_command_group", {})
+            return bool(
+                self.config["gates"].get("rerun_review_on_final_checks_failure")
+                and isinstance(last, dict)
+                and last.get("stage") == "final-checks"
+                and last.get("failed") is True
+            )
         raise ValueError(f"Unknown pipeline condition: {condition}")
 
     def _structured_review_findings(self) -> list[dict[str, Any]]:
@@ -742,10 +785,19 @@ class PipelineRunner:
         return "x" if status == "passed" else " "
 
     def _review_artifact_refs(self) -> list[tuple[str, str]]:
-        passes = list(self.state.get("review", {}).get("passes", {}).keys())
-        if not passes:
-            passes = self.state.get("routing", {}).get("review_passes", [])
         refs = []
+        reviews = self.state.get("reviews", {})
+        if reviews:
+            for stage, data in reviews.items():
+                aggregate = data.get("artifact")
+                if isinstance(aggregate, str) and (self.run_dir / aggregate).exists():
+                    refs.append((stage, self._artifact_ref(aggregate)))
+                for review_pass in data.get("passes", {}).keys():
+                    artifact = self._review_artifact_for_pass(review_pass, aggregate or "review.md")
+                    if (self.run_dir / artifact).exists():
+                        refs.append((f"{stage}:{review_pass}", self._artifact_ref(artifact)))
+            return refs
+        passes = list(self.state.get("review", {}).get("passes", {}).keys()) or self.state.get("routing", {}).get("review_passes", [])
         for review_pass in passes:
             artifact = self._review_artifact_for_pass(review_pass)
             if (self.run_dir / artifact).exists():
@@ -884,7 +936,12 @@ class PipelineRunner:
                 elif step["type"] == "review_group":
                     self._run_review_group(step)
                 elif step["type"] == "command_group":
-                    self._run_commands(step)
+                    failure_message = self._run_commands(step)
+                    if failure_message:
+                        if self._defer_command_group_failure(stage):
+                            self.state["pending_failure"] = {"stage": stage, "message": failure_message}
+                        else:
+                            raise RuntimeError(failure_message)
                 elif step["type"] == "forge_pr":
                     if not self.options.dry_run:
                         self._create_pr()
@@ -893,6 +950,9 @@ class PipelineRunner:
                 if not self.options.dry_run:
                     self.state.setdefault("completed", []).append(stage)
                     self._save_state()
+            pending_failure = self._pending_failure_message()
+            if pending_failure:
+                raise RuntimeError(pending_failure)
         except Exception:
             if not self.options.dry_run:
                 if self.state.get("status") == "running":

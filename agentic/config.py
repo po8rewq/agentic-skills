@@ -100,6 +100,7 @@ DEFAULTS: dict[str, Any] = {
         "require_approval_after": ["requirements", "architecture"],
         "require_tests_before_review": True,
         "block_on_review_findings": ["blocking", "security"],
+        "rerun_review_on_final_checks_failure": True,
     },
     "risk_routing": {
         "default_level": "low",

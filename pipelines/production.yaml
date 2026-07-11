@@ -28,6 +28,11 @@ steps:
   - id: final-checks
     type: command_group
     commands: [lint, typecheck, test, build]
+  - id: review-final-checks
+    type: review_group
+    condition: final_checks_failed_for_review
+    inputs: [requirements.md, design.md, git_diff, test_results]
+    output: review-final-checks.md
   - id: pull-request
     type: forge_pr
     condition: forge_create_pr_enabled

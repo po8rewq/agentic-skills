@@ -394,6 +394,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(PipelineRunner._review_skill_for_pass("correctness"), "review-correctness")
         self.assertEqual(PipelineRunner._review_skill_for_pass("migration_or_rollback"), "review-migrations")
         self.assertEqual(PipelineRunner._review_artifact_for_pass("migration_or_rollback"), "review-migrations.md")
+        self.assertEqual(
+            PipelineRunner._review_artifact_for_pass("correctness", "review-final-checks.md"),
+            "review-final-checks-correctness.md",
+        )
 
     def test_requirements_blocked_gate_stops_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -710,6 +714,81 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(evaluation["status"], "failed")
             self.assertEqual(evaluation["checks"]["test"]["exit_code"], 2)
             self.assertEqual(evaluation["checks"]["test"]["status"], "failed")
+
+    def test_final_checks_failure_triggers_diagnostic_review_before_run_fails(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=REVIEW_APPROVED, command=["fake-review", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pipeline = {
+                "steps": [
+                    {"id": "final-checks", "type": "command_group", "commands": ["test"]},
+                    {
+                        "id": "review-final-checks",
+                        "type": "review_group",
+                        "condition": "final_checks_failed_for_review",
+                        "inputs": ["git_diff", "test_results"],
+                        "passes": ["correctness"],
+                        "output": "review-final-checks.md",
+                    },
+                ]
+            }
+            runner = self.runner(root, pipeline)
+            runner.config["commands"]["test"] = "python3 -c 'import sys; sys.exit(2)'"
+            runner.config["gates"]["rerun_review_on_final_checks_failure"] = True
+
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()):
+                with self.assertRaisesRegex(RuntimeError, "Command group 'final-checks' failed"):
+                    runner.run()
+
+            state = json.loads((runner.run_dir / "state.json").read_text())
+            evaluation = yaml.safe_load((runner.run_dir / "evaluation.yaml").read_text())
+            self.assertEqual(state["status"], "failed")
+            self.assertEqual(state["completed"], ["final-checks", "review-final-checks"])
+            self.assertEqual(state["last_command_group"]["stage"], "final-checks")
+            self.assertTrue(state["last_command_group"]["failed"])
+            self.assertEqual(state["pending_failure"]["stage"], "final-checks")
+            self.assertIn("review-final-checks", state["reviews"])
+            self.assertTrue((runner.run_dir / "review-final-checks.md").exists())
+            self.assertTrue((runner.run_dir / "review-final-checks-correctness.md").exists())
+            self.assertEqual(evaluation["status"], "failed")
+            self.assertEqual(evaluation["checks"]["test"]["status"], "failed")
+
+    def test_early_checks_failure_does_not_trigger_diagnostic_review(self):
+        class FakeProvider:
+            def run(self, prompt, model, stage):
+                return ProviderResult(output=REVIEW_APPROVED, command=["fake-review", stage], returncode=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pipeline = {
+                "steps": [
+                    {"id": "checks", "type": "command_group", "commands": ["test"]},
+                    {
+                        "id": "review-final-checks",
+                        "type": "review_group",
+                        "condition": "final_checks_failed_for_review",
+                        "inputs": ["git_diff", "test_results"],
+                        "passes": ["correctness"],
+                        "output": "review-final-checks.md",
+                    },
+                ]
+            }
+            runner = self.runner(root, pipeline)
+            runner.config["commands"]["test"] = "python3 -c 'import sys; sys.exit(2)'"
+            runner.config["gates"]["rerun_review_on_final_checks_failure"] = True
+
+            with patch("agentic.pipeline.make_provider", return_value=FakeProvider()) as provider:
+                with self.assertRaisesRegex(RuntimeError, "Command group 'checks' failed"):
+                    runner.run()
+
+            state = json.loads((runner.run_dir / "state.json").read_text())
+            self.assertEqual(state["completed"], [])
+            self.assertNotIn("pending_failure", state)
+            self.assertFalse((runner.run_dir / "review-final-checks.md").exists())
+            provider.assert_not_called()
 
 
 if __name__ == "__main__":
